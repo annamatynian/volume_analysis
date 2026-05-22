@@ -2175,6 +2175,12 @@ Z-score текущей цены относительно STH Realized Price: {_z
             _tmm_mb02_df  = await _hc.get_true_market_mean(start_date=_h_start, end_date=_h_end)
             # МБ-04: Supply in Loss — счётчик монет в убытке
             _sl_mb04_df   = await _hc.get_supply_loss(start_date=_h_start, end_date=_h_end)
+            # МБ-06: Общий NUPL — нереализованный P&L всего рынка
+            _nupl_mb06_df = await _hc.get_nupl(start_date=_h_start, end_date=_h_end)
+            # МБ-07: MVRV Z-Score — макро позиционирование
+            _mvrv_z_df    = await _hc.get_mvrv_zscore(start_date=_h_start, end_date=_h_end)
+            # МБ-08: Realized Cap HODL Waves (RC-доли для расчёта OCA)
+            _rc_hodl_df   = await _hc.get_realized_cap_hodl_waves(start_date=_h_start, end_date=_h_end)
 
             def _hlast(df, col):
                 # WHY: берём последнее ненулевое значение;
@@ -2482,6 +2488,149 @@ Supply in Loss : {_sl_str}
             except Exception as _sl_e:
                 print(f"\n[МБ-04 | SUPPLY IN LOSS]\n{'-'*66}\nДанные недоступны: {_sl_e}")
 
+            # --- [МБ-06 | NUPL] ---
+            try:
+                from mozart_signals import classify_nupl_regime as _cls_nupl
+                _nupl_v = _hlast(_nupl_mb06_df, 'nupl')
+                if not pd.isna(_nupl_v):
+                    _nupl_zone = _cls_nupl(_nupl_v)
+                    _nupl_zone_desc = {
+                        'BULL'       : 'значение выше 0.50 — нереализованная прибыль превышает 50% от market cap.',
+                        'HOPE'       : 'значение в диапазоне 0.25–0.50.',
+                        'EARLY_BEAR' : 'значение в диапазоне 0.0–0.25.',
+                        'BEAR'       : 'значение отрицательное: нереализованный убыток.',
+                        'BOTTOM_ZONE': 'значение ниже −0.40 — целевой порог Mozart (пост 15.05.2026).',
+                    }[_nupl_zone]
+                    _nupl_str = f'{_nupl_v:.4f}'
+                else:
+                    _nupl_zone = _nupl_zone_desc = 'н/д'
+                    _nupl_str = 'н/д'
+
+                print(f"""
+[МБ-06 | NUPL — нереализованный P&L рынка]
+{'-'*66}
+Что измеряет: (market cap − realized cap) / market cap.
+> 0 = рынок в совокупной нереализованной прибыли; < 0 = в нереализованном убытке.
+Mozart (пост 15.05.2026): целевой порог дна цикла ≈ −0.40.
+
+NUPL : {_nupl_str}
+Зона : {_nupl_zone}  ({_nupl_zone_desc})
+
+Зоны (пороги из MOZART_CONFIG):
+  BULL        : nupl ≥ 0.50.
+  HOPE        : 0.25 ≤ nupl < 0.50.
+  EARLY_BEAR  : 0.0 ≤ nupl < 0.25.
+  BEAR        : −0.40 < nupl < 0.0 — нереализованный убыток.
+  BOTTOM_ZONE : nupl ≤ −0.40 — целевой порог Mozart."""
+                )
+            except Exception as _nupl_e:
+                print(f"\n[МБ-06 | NUPL]\n{'-'*66}\nДанные недоступны: {_nupl_e}")
+
+            # --- [МБ-07 | MVRV Z-SCORE] ---
+            try:
+                from mozart_signals import classify_mvrv_zscore_regime as _cls_mz
+                _mvrv_z_v = _hlast(_mvrv_z_df, 'mvrv_zscore')
+                if not pd.isna(_mvrv_z_v):
+                    _mvrv_z_zone = _cls_mz(_mvrv_z_v)
+                    _mvrv_z_desc = {
+                        'PEAK'   : 'z > 7.0.',
+                        'BULL'   : '3.0 ≤ z ≤ 7.0.',
+                        'NEUTRAL': '0.0 ≤ z < 3.0 — market cap выше realized cap.',
+                        'BEAR'   : '−1.0 < z < 0.0 — market cap ниже realized cap.',
+                        'BOTTOM' : 'z ≤ −1.0 — порог Mozart (пост 25.02.2026).',
+                    }[_mvrv_z_zone]
+                    _mvrv_z_str = f'{_mvrv_z_v:.4f}'
+                else:
+                    _mvrv_z_zone = _mvrv_z_desc = 'н/д'
+                    _mvrv_z_str = 'н/д'
+
+                print(f"""
+[МБ-07 | MVRV Z-SCORE — позиция рынка относительно истории]
+{'-'*66}
+Что измеряет: (market cap − realized cap) / std(market cap).
+Z = 0: market cap равен realized cap.
+Z < 0: market cap ниже realized cap.
+Mozart (пост 25.02.2026): Z < 0 = market cap ниже средней цены покупки всех BTC.
+
+MVRV Z-Score : {_mvrv_z_str}
+Зона        : {_mvrv_z_zone}  ({_mvrv_z_desc})
+
+Зоны (пороги из MOZART_CONFIG):
+  PEAK   : z > 7.0.
+  BULL   : 3.0 ≤ z ≤ 7.0.
+  NEUTRAL: 0.0 ≤ z < 3.0.
+  BEAR   : −1.0 < z < 0.0.
+  BOTTOM : z ≤ −1.0."""
+                )
+            except Exception as _mz_e:
+                print(f"\n[МБ-07 | MVRV Z-SCORE]\n{'-'*66}\nДанные недоступны: {_mz_e}")
+
+            # --- [МБ-08 | ONE-CYCLE AVG] ---
+            try:
+                from mozart_signals import (
+                    calculate_one_cycle_average as _calc_oca,
+                    classify_one_cycle_regime   as _cls_oca,
+                )
+                def _rclast(col):
+                    return float(_rc_hodl_df[col].iloc[-1]) if (
+                        not _rc_hodl_df.empty and col in _rc_hodl_df.columns
+                    ) else float('nan')
+
+                _rc_2y3y    = _rclast('age_2y_3y')
+                _rc_3y4y    = _rclast('age_3y_4y')
+                _sup_2y3y   = _hwlast('age_2y_3y')
+                _sup_3y4y   = _hwlast('age_3y_4y')
+                _age_cols   = [c for c in _hodl_df.columns if c != 'date'] if not _hodl_df.empty else []
+                _total_sup  = float(_hodl_df[_age_cols].iloc[-1].sum()) if _age_cols else float('nan')
+                _rp_for_oca = _hlast(_rp_mb01_df, 'realized_price')
+
+                _oca_inputs_ok = not any(
+                    pd.isna(v) for v in [_rc_2y3y, _rc_3y4y, _sup_2y3y, _sup_3y4y, _total_sup, _rp_for_oca]
+                )
+                if _oca_inputs_ok:
+                    _oca = _calc_oca(
+                        _rc_2y3y, _rc_3y4y, _rp_for_oca,
+                        _sup_2y3y, _sup_3y4y, _total_sup,
+                    )
+                    _oca_regime = _cls_oca(float(current_price), _oca, days_below=0)
+                    _oca_regime_desc = {
+                        'ABOVE'         : 'цена выше OCA.',
+                        'TECHNICAL_BEAR': 'цена ниже OCA, счётчик дней не превышает порог (60 дней).',
+                        'CONFIRMED_BEAR': 'цена ниже OCA более 60 дней подряд.',
+                    }[_oca_regime]
+                    _oca_str  = f'${_oca:,.0f}'
+                    _dist_pct = f'{(float(current_price) - _oca) / _oca * 100:+.1f}%'
+                else:
+                    _oca = float('nan')
+                    _oca_regime = _oca_regime_desc = 'н/д'
+                    _oca_str = _dist_pct = 'н/д'
+
+                _rc_2y3y_str = f'{_rc_2y3y:.4f}' if not pd.isna(_rc_2y3y) else 'н/д'
+                _rc_3y4y_str = f'{_rc_3y4y:.4f}' if not pd.isna(_rc_3y4y) else 'н/д'
+
+                print(f"""
+[МБ-08 | ONE-CYCLE AVG — средняя цена когорты BTC 2–4 лет]
+{'-'*66}
+Что измеряет: средняя цена покупки BTC с возрастом UTXO 2–4 года (один цикл).
+Формула: (RC_2y3y + RC_3y4y) × Realized Price × Total Supply
+        / (Supply_2y3y_btc + Supply_3y4y_btc)
+Mozart (пост 13.05.2026): цена ниже OCA > 60 дней = активация зоны CONFIRMED_BEAR.
+
+OCA          : {_oca_str}
+Текущая цена : ${current_price:,.0f}  ({_dist_pct} от OCA)
+RC доля 2–3л : {_rc_2y3y_str}  (доля возрастной когорты в realized cap)
+RC доля 3–4л : {_rc_3y4y_str}  (доля возрастной когорты в realized cap)
+Зона         : {_oca_regime}  ({_oca_regime_desc})
+⚠️  days_below=0: счётчик дней ниже OCA не реализован в этой версии.
+
+Зоны:
+  ABOVE          : цена ≥ OCA.
+  TECHNICAL_BEAR : цена < OCA, отсчёт дней ≤ 60.
+  CONFIRMED_BEAR : цена < OCA, отсчёт дней > 60."""
+                )
+            except Exception as _oca_e:
+                print(f"\n[МБ-08 | ONE-CYCLE AVG]\n{'-'*66}\nДанные недоступны: {_oca_e}")
+
         except Exception as _he:
             print(f"\n[HOLDER STRUCTURE]\n{'-'*66}\nДанные недоступны: {_he}")
     else:
@@ -2551,6 +2700,15 @@ Supply in Loss : {_sl_str}
     recent_delta = build_reaction_delta(
         reaction_zip_paths, poc, current_atr, DEFAULT_CACHE_DIR
     )
+
+    # [WARN] Цена вне зоны POC → recent_delta=0 семантически верен (не баг)
+    # WHY: reaction delta измеряет давление НА УРОВНЕ POC. Если цена торгуется
+    # далеко от POC (> ±1.5 ATR), в зоне нет сделок → cvd=0 математически корректен.
+    _rz_low  = poc - 1.5 * current_atr
+    _rz_high = poc + 1.5 * current_atr
+    if current_price < _rz_low or current_price > _rz_high:
+        print(f"[WARN] Цена ({current_price:,.0f}) вне зоны POC [{_rz_low:,.0f} – {_rz_high:,.0f}]. "
+              f"recent_delta=0 семантически верен (нет сделок у POC).")
 
     # --- Этап 9: Delta Volume Profile (klines 1m) — с кэшем parquet ---
     # WHY кэш: повторные запуски не читают ~15 MB ZIP — берут готовый poc_bin_delta из parquet.

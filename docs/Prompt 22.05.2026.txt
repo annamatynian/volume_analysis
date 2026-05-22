@@ -1,0 +1,53 @@
+Ты senior Python engineer и data scientist, специализируешься на on-chain анализе Bitcoin.
+Проект: D:\DeFi-RAG-Projects\volume_analysis
+
+Перед началом работы:
+1. Прочитай NEXT_SESSION_2026-05-22.md — точка входа и список задач
+2. Прочитай Правила работы и написания тестов.txt — TDD-правила проекта (обязательно)
+
+Контекст проекта:
+- volume_density.py — оркестратор, выводит структурированный терминальный отчёт
+- mozart_signals.py — classify-функции для 14 сигналов Signal Alignment
+- mozart_alignment.py — build_alignment(), signal_polarity()
+- onchain_client.py + onchain_cache.py — BGeometrics API + parquet-кэш (23ч)
+- Тест-сьют: 329+ passed, 0 failed. TDD строго обязателен.
+- Репозиторий: https://github.com/annamatynian/volume_analysis
+
+Сделано в прошлой сессии (2026-05-22):
+- Signal Alignment (L3-3 Часть 1) полностью интегрирован: 13/14 сигналов заполнены
+- 8 методов добавлены в CachedBGeometricsClient (get_realized_price и др.)
+- MOZART_CONFIG импортирован локально в МБ-01 и МБ-04
+- [WARN] при fallback на устаревший кэш — показывает возраст данных явно
+- Репозиторий создан и залит
+
+Задачи по приоритету:
+
+P1 — ДИАГНОСТИКА cvd=0.0000 / poc_bin_delta=0.00
+Все reaction- и klines-delta parquet с 2026-05-14 пишут нули.
+Начни с этой команды (по одной строке в PowerShell):
+
+.\venv\Scripts\python.exe -c "import zipfile, pandas as pd; z=zipfile.ZipFile('data/futures/um/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2026-05-14.zip'); f=z.open(z.namelist()[0]); df=pd.read_csv(f,nrows=3); print(df.columns.tolist()); print(df.head(3))"
+
+Гипотеза: изменился формат колонок aggTrades ZIP (quantity vs qty, is_buyer_maker).
+После диагностики — TDD-фикс если нужен.
+
+P2 — L3-3 Части 2 и 3: новые print-блоки в оркестратор
+Добавить [МБ-06 | NUPL], [МБ-07 | MVRV Z-SCORE], [МБ-08 | ONE-CYCLE AVG].
+Методы клиента готовы: get_nupl(), get_mvrv_zscore(), get_realized_cap_hodl_waves().
+Обновить [FINAL VERDICT] строками для новых блоков.
+Оркестратор не unit-тестируется — проверка через py_compile + запуск.
+
+P3 — МБ-03 STH Profit (опционально)
+Проверить endpoint /v1/profit-loss на free tier. Если 403 — закрыть задачу.
+Если доступен — добавить get_sth_profit() в client + cache, по шаблону существующих методов.
+
+P4 — git после каждой сессии
+git add . → git commit -m "feat/fix: <описание>" → git push
+
+Правила работы (напоминание):
+- Команды в PowerShell — по одной, без &&
+- Файлы редактировать только через filesystem:edit_file с dryRun=true сначала
+- Якорь для edit — минимум 4 уникальных последовательных строки
+- py_compile после каждого изменения production-кода
+- Новые production-функции — только после RED теста
+- multi-line python -c не работает на Windows — писать temp .py файл
