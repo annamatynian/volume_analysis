@@ -1,0 +1,397 @@
+## КРИТИЧЕСКОЕ ПРАВИЛО: Запрет на bash-команды для изменения файлов на Windows
+
+**ПРОБЛЕМА:** 
+Команды `cat >>`, `echo >>`, `sed -i` в bash_tool на Windows (Git Bash/WSL) работают некорректно с путями вида `C:\...`. Вместо добавления/редактирования происходит **ПЕРЕЗАПИСЬ/ПОВРЕЖДЕНИЕ** файлов.
+
+**ЗАПРЕЩЕНО использовать bash_tool для:**
+- `cat >> "C:\path\file"` 
+- `echo >> "C:\path\file"`
+- `sed -i 's/.../.../g' "C:\path\file"`
+- Любые другие команды записи через bash с Windows-путями
+
+
+<critical_file_edit_enforcement>
+MANDATORY: Before EVERY file edit operation, Claude MUST:
+
+1. Print this checklist in response:
+   ═══════════════════════════════════════
+   🛑 FILE EDIT CHECKLIST 🛑
+   ═══════════════════════════════════════
+   File: [name]
+   ☐ Backup created?
+   ☐ Platform Windows? → Using Filesystem tools (not bash)?
+   ☐ Changes >50 lines? → Using write_file (not edit_file)?
+   ☐ Indentation copied EXACTLY?
+   ☐ Will verify with: python -m py_compile file.py
+   ═══════════════════════════════════════
+
+2. Answer EVERY checkbox
+3. If ANY "NO" → explain alternative approach
+4. After edit → IMMEDIATELY run: python -m py_compile file.py
+5. If SyntaxError → ROLLBACK (copy from backup), don't guess fixes
+
+VIOLATION COST (proven 2025-01-02):
+- 50 minutes debugging
+- 80,000 tokens wasted
+- Root cause: Ignored "no bash on Windows" rule
+</critical_file_edit_enforcement>
+
+
+**РАЗРЕШЕНО для изменения файлов:**
+- `Filesystem:edit_file` - для замены текста (str_replace)
+- `Filesystem:write_file` - для создания новых файлов
+- `Filesystem:create_file` - для создания через create_file tool
+
+**bash_tool ТОЛЬКО для:**
+- Чтение: `cat`, `tail`, `head`, `grep` (read-only операции)
+- Навигация: `ls`, `pwd`, `find`
+- Проверка: `wc -l`, `file`
+- Git команды (если работают)
+
+**При необходимости добавить текст в конец файла:**
+1. Прочитать файл: `Filesystem:read_text_file`
+2. Добавить новый текст в конец
+3. Записать обратно: `Filesystem:write_file` (с полным содержимым)
+
+**ВСЕГДА** используй MCP filesystem tools вместо bash для модификации файлов.
+# КОНТЕКСТ ПРОЕКТА
+Python HFT система детекции айсберг-ордеров на криптобиржах (asyncio).
+Архитектура: domain.py (бизнес-логика), analyzers.py (детекция), 
+services.py (оркестрация), infrastructure.py (внешние API).
+
+Путь: C:\Users\annam\Documents\DeFi-RAG-Project\smart_money_python_analysis
+
+# КРИТИЧЕСКИЕ ПРАВИЛА
+
+## 1. РАБОТА С ФАЙЛАМИ
+- ❌ НЕ создавай новые файлы без явного указания
+- ✅ ИСПОЛЬЗУЙ существующие файлы проекта (domain.py, analyzers.py и т.д.)
+- ✅ СНАЧАЛА view существующий код, ПОТОМ вноси изменения
+- ❌ НЕ создавай debug скрипты - используй pytest напрямую
+
+## 2. TDD ПРОЦЕСС
+
+### ══════════════════════════════════════════════════════════
+### 🚫 КРИТИЧЕСКИЙ ЗАПРЕТ: НЕЛЬЗЯ ПРЕДПОЛАГАТЬ RED
+### ══════════════════════════════════════════════════════════
+###
+### После написания теста Claude ОБЯЗАН:
+###   1. Отправить сообщение и ОСТАНОВИТЬСЯ
+###   2. Ждать пока пользователь ЗАПУСТИТ pytest
+###   3. Получить РЕАЛЬНЫЙ вывод с FAILED/ImportError
+###   4. ТОЛЬКО ПОТОМ писать production-код
+###
+### ❌ ЗАПРЕЩЕНО: написать тест и сразу писать реализацию
+###    в том же или следующем сообщении без паузы
+###
+### ❌ ЗАПРЕЩЕНО: рассуждать «RED очевиден → перехожу к GREEN»
+###    Очевидный RED ≠ подтверждённый RED.
+###    Без реального вывода от пользователя нет никакой
+###    гарантии что тест вообще что-то проверяет.
+###
+### ПОЧЕМУ ЭТО ВАЖНО (прецедент МБ-02, 20.05.2026):
+###   Claude написал тест и сразу реализацию «потому что
+###   ImportError был бы неизбежен». Тесты прошли.
+###   Но: если бы функция уже существовала под другим именем,
+###   или была импортирована из другого модуля — тест прошёл бы
+###   БЕЗ реализации → тест ничего не проверял бы.
+###   RED без подтверждения = GREEN без гарантии.
+### ══════════════════════════════════════════════════════════
+
+1. СНАЧАЛА: Создай тесты в tests/test_*.py — отправь сообщение, СТОП
+2. ЖДАТЬ: пользователь запускает pytest, присылает вывод FAILED/ImportError
+3. ТОЛЬКО ПОСЛЕ RED: пиши production-код
+4. ПРОВЕРКА: пользователь запускает pytest ещё раз — PASSED
+5. ❌ НЕ пиши код без тестов
+6. ❌ НЕ создавай "валидационные скрипты" - пиши тесты
+
+## 3. МОДИФИКАЦИЯ КОДА
+- ✅ Используй Filesystem:edit_file с конкретными строками
+- ❌ НЕ переписывай весь файл целиком
+- ✅ Добавляй новые Pydantic поля как Optional с defaults
+- ❌ НЕ меняй публичные сигнатуры методов без разрешения
+- ✅ Сохраняй обратную совместимость
+
+## 4. PYTHON ОСОБЕННОСТИ
+- ⚠️ Python кеширует .pyc модули - ВСЕГДА напоминай перезапустить shell
+- ✅ После изменения domain.py: "Перезапусти Python shell перед pytest"
+- ❌ НЕ предполагай что изменения применились без перезапуска
+
+## 5. ПРОЦЕСС ОТЛАДКИ
+Если тесты падают:
+1. Попроси OUTPUT pytest -v (полный вывод)
+2. Проверь ПРИЧИНУ (assertion, import error, cache)
+3. Если cache - напомни перезапустить shell
+4. Исправь КОД, не создавай новые debug файлы
+
+## 6. ЭКОНОМИЯ ТОКЕНОВ
+- ❌ НЕ создавай отдельные валидационные скрипты
+- ✅ ВСЯ валидация через pytest
+- ❌ НЕ пиши длинные объяснения - сразу код
+- ✅ КРАТКИЕ комментарии "WHY:" в коде
+- ❌ НЕ показывай весь файл - только diff
+
+
+# ЧТО ЗАПРЕЩЕНО
+❌ Создавать debug_*.py, validate_*.py и другие вспомогательные скрипты
+❌ Переписывать целые файлы
+❌ Предполагать что код работает без pytest вывода
+❌ Игнорировать проблему кеширования .pyc
+❌ Создавать "примеры использования" вместо реальных тестов
+
+# ЧТО ОБЯЗАТЕЛЬНО
+✅ Все изменения через Filesystem:edit_file
+✅ Все проверки через pytest
+✅ Всегда напоминать про перезапуск shell
+✅ Ждать реального вывода от меня
+✅ Краткость и конкретика  
+
+**СОЗДАНИЕ ФАЙЛОВ НА WINDOWS:**
+❌ НЕ ИСПОЛЬЗОВАТЬ: create_file (это для /home/claude)
+✅ ИСПОЛЬЗОВАТЬ: Filesystem:write_file для C:\... путей
+
+**ПРАВИЛО:**
+create_file → только для /home/claude или /mnt/user-data/outputs
+Filesystem:write_file → для C:\Users\annam\Documents\... # ТЕХНИЧЕСКИЕ ПРАВИЛА ДЛЯ РАБОТЫ С ПРОЕКТОМ
+
+## 1. РАБОТА С ФАЙЛОВОЙ СИСТЕМОЙ (КРИТИЧНО!)
+
+### ❌ НЕ ИСПОЛЬЗУЙ bash_tool для Windows путей:
+```bash
+# ❌ НЕПРАВИЛЬНО - cd не работает с C:\...
+cd "C:\Users\annam\..." && grep ...
+
+# ❌ НЕПРАВИЛЬНО - cat >> перезаписывает файлы!
+cat >> "C:\path\file.py"
+```
+
+### ✅ ИСПОЛЬЗУЙ Filesystem tools:
+```python
+# ✅ ПРАВИЛЬНО - чтение
+Filesystem:read_text_file(path="C:\Users\annam\...")
+
+# ✅ ПРАВИЛЬНО - поиск
+Filesystem:search_files(path="C:\Users\...", pattern="*ofi*.py")
+
+# ✅ ПРАВИЛЬНО - редактирование
+Filesystem:edit_file(path="C:\...", edits=[...])
+
+# ✅ ПРАВИЛЬНО - создание
+Filesystem:write_file(path="C:\...", content="...")
+```
+
+### bash_tool ТОЛЬКО для:
+- `ls`, `pwd`, `find` (навигация)
+- `cat`, `head`, `tail`, `grep` (чтение, БЕЗ cd)
+- `wc -l`, `file` (проверка)
+
+## 2. СТРУКТУРА ПРОЕКТА (ЗАПОМНИ!)
+
+### Ключевые файлы:
+```
+smart_money_python_analysis/
+├── domain.py              # Модели + LocalOrderBook
+│   ├── calculate_ofi()         # OFI (строки ~782-850)
+│   ├── get_weighted_obi()      # OBI (строки ~873-950)
+│   ├── _save_book_snapshot()   # OFI helper
+│   └── IcebergLevel, VolumeBucket, HistoricalMemory
+│
+├── analyzers.py           # IcebergAnalyzer, WhaleAnalyzer
+│   ├── analyze_with_timing()   # Delta-t validation
+│   └── AlgoDetectionMetrics
+│
+├── services.py            # TradingEngine (orchestration)
+│   ├── _consume_trades_and_depth()
+│   └── LatencyMonitor, ReorderingBuffer
+│
+├── infrastructure.py      # Binance/Deribit APIs
+├── config.py             # AssetConfig (BTC/ETH/SOL)
+└── tests/
+    ├── test_ofi_implementation.py
+    ├── test_exponential_obi.py
+    └── test_dynamic_ofi_depth.py
+```
+
+### Если нужно найти метод:
+1. **НЕ** используй grep через bash
+2. Используй `Filesystem:search_files` или `Filesystem:read_text_file`
+3. **ИЛИ** просто спроси: "Где метод X?" - я знаю структуру
+
+## 3. АНТИ-ПАТТЕРНЫ (ЭКОНОМИЯ ТОКЕНОВ)
+
+### ❌ НЕ ДЕЛАЙ:
+```python
+# 1. НЕ пытайся cd в Windows пути через bash
+cd "C:\..." && grep ...
+
+# 2. НЕ создавай validate/debug скрипты
+debug_ofi.py, validate_methods.py
+
+# 3. НЕ показывай весь файл - только diff
+view(path="domain.py")  # 1000+ строк
+
+# 4. НЕ переписывай код без тестов
+Filesystem:write_file(...)  # БЕЗ pytest
+```
+
+### ✅ ДЕЛАЙ:
+```python
+# 1. Используй Filesystem tools
+Filesystem:read_text_file(path="...", head=50)
+
+# 2. Вся валидация через pytest
+pytest tests/test_ofi.py -v
+
+# 3. Показывай только нужное
+Filesystem:read_text_file(path="domain.py", head=100)
+
+# 4. TDD: тест → код → pytest
+```
+
+## 4. БЫСТРЫЕ ОТВЕТЫ НА ЧАСТЫЕ ВОПРОСЫ
+
+**Q: Где OFI?**
+A: `domain.py` → `LocalOrderBook.calculate_ofi()` (строка ~782)
+
+**Q: Где OBI?**
+A: `domain.py` → `LocalOrderBook.get_weighted_obi()` (строка ~873)
+
+**Q: Как найти метод X?**
+A: `Filesystem:search_files(pattern="*X*.py")` или просто спроси
+
+**Q: Нужно изменить код?**
+A: 1) view существующий код → 2) создай тест → 3) edit_file → 4) pytest
+
+**Q: Bash не работает?**
+A: Переключись на Filesystem tools - bash НЕ работает с Windows путями
+
+## 5. WORKFLOW ДЛЯ ИЗМЕНЕНИЙ
+```
+1. Filesystem:read_text_file(path="X.py", head=50)  # Посмотри код
+2. Создай тест в tests/test_X.py                   # TDD
+3. Filesystem:edit_file(path="X.py", edits=[...])  # Измени
+4. НАПОМНИ: "Перезапусти Python shell"             # .pyc cache!
+5. Попроси: "Запусти pytest tests/test_X.py -v"   # Проверь
+```
+
+## 6. КРИТИЧЕСКИЕ НАПОМИНАНИЯ
+
+⚠️ **Python кеширует .pyc** - ВСЕГДА напоминай перезапустить shell после изменений domain.py
+⚠️ **Windows пути** - bash_tool НЕ работает с `C:\...` для записи
+⚠️ **Нет debug скриптов** - только pytest
+⚠️ **Нет валидационных скриптов** - только pytest
+⚠️ **Экономь токены** - не показывай полные файлы, только diff
+
+## 7. ЕСЛИ СОМНЕВАЕШЬСЯ
+
+**Вместо:** "Давай создам validate_ofi.py чтобы проверить..."
+**Делай:** "Создам тест в tests/test_ofi.py и запусти pytest"
+
+**Вместо:** `cd "C:\..." && grep ...`
+**Делай:** `Filesystem:search_files(path="C:\...", pattern="...")`
+
+**Вместо:** Показать весь domain.py (1000 строк)
+**Делай:** `read_text_file(path="domain.py", head=100)` или search_files
+
+КРИТИЧЕСКОЕ ПРАВИЛО TDD: НЕТ ПОДГОНКЕ ТЕСТОВ
+❌ ЗАПРЕЩЕНО: "Удобные" решения которые ломают production
+ПРОБЛЕМА: Когда тест падает, есть соблазн "исправить тест" вместо "исправить систему".
+Примеры НЕПРАВИЛЬНЫХ решений:
+BAD Example 1: Gemini Feedback Loop
+python# ❌ НЕПРАВИЛЬНО - Gemini предложил изменить сигнатуру метода для теста
+def calculate_volatility_factor(book: LocalOrderBook) -> float:
+    # Это ЛОМАЕТ stateless design ради удобства теста!
+BAD Example 2: Baseline Snapshot В ПРОДАКШЕНЕ
+python# ❌ НЕПРАВИЛЬНО - "сохранить baseline перед каждым update"
+# Бот НЕ ЗНАЕТ когда начнется flash crash!
+if might_be_crash:  # ← КАК ЭТО ОПРЕДЕЛИТЬ???
+    baseline = book.spread_mean
+BAD Example 3: Послабление Assertions
+python# ❌ НЕПРАВИЛЬНО - ослабили требования чтобы тест прошёл
+assert vol_factor > 0.5  # Было: > 2.0
+# Теперь тест "зелёный" но система НЕ РАБОТАЕТ!
+✅ ПРАВИЛЬНЫЙ подход:
+1. Тест моделирует РЕАЛЬНЫЙ сценарий
+python# ✅ ПРАВИЛЬНО - тест проверяет что ДОЛЖНО происходить в production
+def test_flash_crash_regime_switch():
+    # 110 нормальных updates (стабильная статистика)
+    for i in range(110):
+        book.apply_depth_update(...)
+    
+    # SNAPSHOT baseline (это делает ТЕСТ, не production!)
+    baseline_mean = book.spread_mean
+    
+    # Flash crash
+    book.apply_depth_update(bids=[...], asks=[...])
+    
+    # Проверка что система ОБНАРУЖИТ аномалию
+    vol_factor = calculate_volatility_factor(
+        current_spread, 
+        baseline_mean,  # ← Тест симулирует "чистый baseline"
+        baseline_std
+    )
+    assert vol_factor > 2.0  # Система ДОЛЖНА детектировать!
+2. Production использует ДРУГОЙ механизм
+python# ✅ ПРАВИЛЬНО - в services.py будет EMA baseline
+class LatencyMonitor:
+    def __init__(self):
+        self.ema_spread_baseline = None  # Медленно адаптируется
+    
+    def update(self, current_spread):
+        alpha = 0.05  # 95% вес на истории, 5% на текущем
+        self.ema_spread_baseline = (
+            alpha * current_spread + 
+            (1 - alpha) * self.ema_spread_baseline
+        )
+```
+
+## 🎯 ПРАВИЛО ПРИНЯТИЯ РЕШЕНИЙ:
+
+Когда тест падает, задай вопросы:
+
+1. **"Решение работает в production БЕЗ знания будущего?"**
+   - ❌ Если НЕТ → это подгонка теста
+   - ✅ Если ДА → продолжай
+
+2. **"Я меняю архитектуру ради теста или тест ради архитектуры?"**
+   - ❌ Архитектуру ради теста → подгонка
+   - ✅ Тест моделирует реальность → правильно
+
+3. **"Production система станет НАДЁЖНЕЕ после этого изменения?"**
+   - ❌ Если "просто пройдёт тест" → косметика
+   - ✅ Если "обнаружит больше реальных багов" → правильно
+
+## 📋 CHECKLIST перед изменением:
+```
+☐ Изменение решает РЕАЛЬНУЮ production проблему?
+☐ Тест моделирует РЕАЛЬНЫЙ сценарий использования?
+☐ Production код НЕ ЗНАЕТ о будущих событиях?
+☐ Архитектура остаётся stateless/clean/SOLID?
+☐ Альтернативы рассмотрены и ОБОСНОВАННО отклонены?
+💡 КОГДА "простое решение" ПРАВИЛЬНОЕ:
+Иногда простое решение КОРРЕКТНО если:
+python# ✅ OK - тест предоставляет данные которые production получит из других источников
+def test_iceberg_detection_with_gex():
+    book.gamma_profile = GammaProfile(...)  # Тест симулирует Deribit API
+    # В production это придёт из infrastructure.py
+КЛЮЧ: Тест симулирует ВНЕШНИЙ источник данных, не "магическое знание".
+
+ИТОГО: Если решение требует "знания будущего" или нарушает SOLID принципы - это подгонка. Отклоняй такие решения даже если они от Gemini/GPT/эксперта.
+
+Промпт для предотвращения "подгонки" тестов (Anti-Test-Fitting)
+Инструкция: "Принцип единого источника истины (SSOT) в тестировании"
+При написании или рефакторинге тестов для моего проекта (Crypto/Data Science аналитика), СТРОГО соблюдай следующие правила:
+
+Запрет на дублирование логики: Тест никогда не должен содержать внутри себя математические формулы для расчета метрик (затухание GEX, VPIN-штрафы, расчет волатильности). Если для проверки результата нужна формула — она обязана вызываться из соответствующего класса в analyzers.py или domain.py.
+
+Проверка контрактов, а не имитация: Если в domain.py у класса GammaProfile нет метода get_decay_factor(), не пиши расчет затухания в теле теста. Вместо этого:
+
+Либо предложи мне сначала добавить этот метод в production-код.
+
+Либо используй тот метод, который уже есть в IcebergAnalyzer, передавая туда объект профиля.
+
+Использование Production-инфраструктуры: Запрещено использовать стандартные коллекции (например, deque или list) там, где в проекте есть специализированные компоненты (например, ReorderingBuffer в infrastructure.py). Тестироваться должен именно компонент, а не его упрощенный аналог.
+
+Никаких Hardcoded Epsilon: Вместо if std == 0: std = 0.001 внутри теста, проверяй, как production-код (например, RegimeAdapter) обрабатывает пограничные случаи. Тест должен выявлять отсутствие обработки ZeroDivisionError, а не скрывать его.
+
+Архитектурная честность: Если ты предлагаешь тест для логики, которая еще не выделена в отдельный метод — сначала укажи на это и предложи провести рефакторинг кода (extract method), и только потом пиши тест, вызывающий этот метод.

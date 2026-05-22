@@ -1,0 +1,69 @@
+# =============================================================
+# volume_analysis — .gitignore
+# =============================================================
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# --- Virtual environment ---
+venv/
+.venv/
+env/
+
+# --- Pytest / coverage ---
+.pytest_cache/
+.tmp/
+.coverage
+htmlcov/
+
+# --- Jupyter ---
+*.ipynb
+.ipynb_checkpoints/
+
+# --- Data: Binance Vision ZIP-файлы (сотни MB каждый) ---
+data/futures/
+data/delta_cache/
+data/metrics/
+
+# --- Data: on-chain кэш (parquet, пересоздаётся автоматически) ---
+data/onchain_cache/
+
+# --- Логи запусков ---
+runs/
+
+# --- Диагностические скрипты (одноразовые, не часть системы) ---
+_diag_*.py
+check_*.py
+debug_*.py
+diagnose_*.py
+diag_*.py
+explore_*.py
+smoke_*.py
+benchmark_*.py
+download_aggtrades_sample.py
+parse_bgeometrics_docs.py
+
+# --- Артефакты диагностики ---
+BGeometrics_docs.json
+
+# --- Резервные копии ---
+*_backup*.py
+*_OLD*.py
+*_backup_before*.py
+
+# --- Сессионные заметки (рабочие, не для репо) ---
+NEXT_SESSION*.md
+
+# --- Word / Office документы ---
+*.docx
+*.xlsx
+
+# --- Прочее ---
+pip
+*.log
+*.tmp
+Untitled*.ipynb
