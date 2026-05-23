@@ -753,6 +753,35 @@ def classify_supply_loss_regime(supply_loss_btc: float) -> str:
 # МБ-08 | One-Cycle Average — средняя когорты 2–4 года (пост 13.05.2026)
 # ---------------------------------------------------------------------------
 
+def count_consecutive_days_below(df, threshold: float) -> int:
+    """
+    Считает последовательные дни С КОНЦА df где df['close'] < threshold.
+
+    Используется оркестратором для вычисления days_below перед передачей в
+    classify_one_cycle_regime(..., days_below=N).
+
+    Args:
+        df:        DataFrame с колонкой 'close' (дневные klines).
+        threshold: Пороговая цена (OCA в контексте МБ-08).
+
+    Returns:
+        int: Количество последовательных дней с конца где close < threshold.
+             0 если df пуст или последний день >= threshold.
+
+    WHY строгое <: аналогично classify_one_cycle_regime (price >= oca → ABOVE);
+        close == threshold = рубикон не пробит, день не засчитывается.
+    WHY с конца: оркестратор отображает ТЕКУЩУЮ непрерывную серию,
+        а не исторический максимум; пробел сбрасывает счётчик.
+    """
+    count = 0
+    for close in reversed(df['close'].tolist()):
+        if float(close) < threshold:
+            count += 1
+        else:
+            break
+    return count
+
+
 def calculate_one_cycle_average(
     age_2y_3y_rc_frac: float,
     age_3y_4y_rc_frac: float,

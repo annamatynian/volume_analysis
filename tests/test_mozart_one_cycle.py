@@ -15,9 +15,14 @@
 #   TECHNICAL_BEAR : price < one_cycle_avg, days_below <= confirmed_days
 #   CONFIRMED_BEAR : price < one_cycle_avg, days_below > confirmed_days
 
+import pandas as pd
 import pytest
 from mozart_config import MOZART_CONFIG
-from mozart_signals import calculate_one_cycle_average, classify_one_cycle_regime
+from mozart_signals import (
+    calculate_one_cycle_average,
+    classify_one_cycle_regime,
+    count_consecutive_days_below,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -244,3 +249,84 @@ class TestClassifyOneCycleRegimeBoundaries:
         # WHY: цена вернулась выше OCA — медвежий режим снят.
         #   Сохранение CONFIRMED_BEAR при восстановлении → навсегда залипший сигнал,
         #   оркестратор не отразит смену фазы.
+
+
+# ---------------------------------------------------------------------------
+# Контракт count_consecutive_days_below — счётчик последовательных дней ниже порога
+# ---------------------------------------------------------------------------
+
+class TestCountConsecutiveDaysBelow:
+    """
+    count_consecutive_days_below(df, threshold) → int
+
+    Функция считает последпвательные дни С КОНЦА df где df['close'] < threshold.
+    Используется оркестратором для вычисления days_below перед передачей в
+    classify_one_cycle_regime(..., days_below=N).
+    """
+
+    _THRESHOLD = 100.0   # нейтральный плейсхолдер, не API-реалистичное значение BTC
+    _BELOW     = 90.0    # нейтральный плейсхолдер: ниже порога
+    _ABOVE     = 110.0   # нейтральный плейсхолдер: выше порога
+
+    def _df(self, closes: list) -> pd.DataFrame:
+        return pd.DataFrame({'close': closes})
+
+    def test_returns_int(self):
+        result = count_consecutive_days_below(self._df([self._BELOW]), self._THRESHOLD)
+        assert isinstance(result, int)
+        # WHY: оркестратор передаёт результат как days_below=N в classify_one_cycle_regime;
+        #   non-int → TypeError при int() конвертации внутри classify.
+
+    def test_all_above_returns_zero(self):
+        df = self._df([self._ABOVE, self._ABOVE, self._ABOVE])
+        assert count_consecutive_days_below(df, self._THRESHOLD) == 0
+        # WHY: если все дни выше OCA — счётчик медвежки равен нулю;
+        #   ненулевой результат → classify вернёт TECHNICAL_BEAR вместо ABOVE.
+
+    def test_consecutive_from_end_counted(self):
+        """2 дня выше, затем 3 дня ниже → возвращает 3."""
+        df = self._df([self._ABOVE, self._ABOVE, self._BELOW, self._BELOW, self._BELOW])
+        assert count_consecutive_days_below(df, self._THRESHOLD) == 3
+        # WHY: функция считает ПОСЛЕДОВАТЕЛЬНЫЕ дни С КОНЦА — именно текущую
+        #   непрерывную серию. Ошибка в направлении (счёт с начала) → неверный
+        #   days_below для всех периодов в оркестраторе.
+
+    def test_gap_in_middle_resets_count(self):
+        """3 дня ниже, 1 день выше, 2 дня ниже → возвращает 2."""
+        df = self._df([
+            self._BELOW, self._BELOW, self._BELOW,
+            self._ABOVE,
+            self._BELOW, self._BELOW,
+        ])
+        assert count_consecutive_days_below(df, self._THRESHOLD) == 2
+        # WHY: один день выше OCA прерывает серию; учитывается только текущая
+        #   непрерывная серия. Игнорирование пробела → завышенный days_below
+        #   → CONFIRMED_BEAR вместо TECHNICAL_BEAR.
+
+    def test_all_below_returns_full_length(self):
+        closes = [self._BELOW] * 5
+        df = self._df(closes)
+        assert count_consecutive_days_below(df, self._THRESHOLD) == len(closes)
+        # WHY: если все дни ниже порога — счётчик равен длине ряда;
+        #   любое меньшее значение → потеря дней, CONFIRMED_BEAR не активируется.
+
+    def test_empty_df_returns_zero(self):
+        df = pd.DataFrame({'close': pd.Series([], dtype=float)})
+        assert count_consecutive_days_below(df, self._THRESHOLD) == 0
+        # WHY: пустой df возможен при недоступности klines в оркестраторе;
+        #   Exception / IndexError вместо 0 → падение всего блока МБ-08.
+
+    def test_last_day_above_returns_zero(self):
+        """Граничный: последний день выше порога → серия сброшена в 0."""
+        df = self._df([self._BELOW, self._BELOW, self._ABOVE])
+        assert count_consecutive_days_below(df, self._THRESHOLD) == 0
+        # WHY: streak сброшен последней свечой; ненулевой результат →
+        #   classify может вернуть TECHNICAL_BEAR при актуальной цене выше OCA.
+
+    def test_price_equal_to_threshold_not_counted(self):
+        """Граничный: close == threshold → НЕ входит в счётчик (строгое <)."""
+        df = self._df([self._BELOW, self._THRESHOLD])
+        assert count_consecutive_days_below(df, self._THRESHOLD) == 0
+        # WHY: контракт «close < threshold» строгий; цена ровно на OCA = рубикон
+        #   не пробит — аналогично classify_one_cycle_regime: price >= oca → ABOVE.
+        #   Нарушение строгого < → завышенный days_below → TECHNICAL_BEAR при нейтральной цене.

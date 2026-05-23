@@ -2570,6 +2570,7 @@ MVRV Z-Score : {_mvrv_z_str}
                 from mozart_signals import (
                     calculate_one_cycle_average as _calc_oca,
                     classify_one_cycle_regime   as _cls_oca,
+                    count_consecutive_days_below as _cnt_days_below,
                 )
                 def _rclast(col):
                     return float(_rc_hodl_df[col].iloc[-1]) if (
@@ -2592,7 +2593,8 @@ MVRV Z-Score : {_mvrv_z_str}
                         _rc_2y3y, _rc_3y4y, _rp_for_oca,
                         _sup_2y3y, _sup_3y4y, _total_sup,
                     )
-                    _oca_regime = _cls_oca(float(current_price), _oca, days_below=0)
+                    _oca_days_below = _cnt_days_below(df, _oca)
+                    _oca_regime = _cls_oca(float(current_price), _oca, days_below=_oca_days_below)
                     _oca_regime_desc = {
                         'ABOVE'         : 'цена выше OCA.',
                         'TECHNICAL_BEAR': 'цена ниже OCA, счётчик дней не превышает порог (60 дней).',
@@ -2607,6 +2609,7 @@ MVRV Z-Score : {_mvrv_z_str}
 
                 _rc_2y3y_str = f'{_rc_2y3y:.4f}' if not pd.isna(_rc_2y3y) else 'н/д'
                 _rc_3y4y_str = f'{_rc_3y4y:.4f}' if not pd.isna(_rc_3y4y) else 'н/д'
+                _days_below_str = str(_oca_days_below) if _oca_inputs_ok else 'н/д'
 
                 print(f"""
 [МБ-08 | ONE-CYCLE AVG — средняя цена когорты BTC 2–4 лет]
@@ -2620,8 +2623,8 @@ OCA          : {_oca_str}
 Текущая цена : ${current_price:,.0f}  ({_dist_pct} от OCA)
 RC доля 2–3л : {_rc_2y3y_str}  (доля возрастной когорты в realized cap)
 RC доля 3–4л : {_rc_3y4y_str}  (доля возрастной когорты в realized cap)
+Days below OCA: {_days_below_str}  (последовательных дней ниже OCA до сегодня; порог 60 дней)
 Зона         : {_oca_regime}  ({_oca_regime_desc})
-⚠️  days_below=0: счётчик дней ниже OCA не реализован в этой версии.
 
 Зоны:
   ABOVE          : цена ≥ OCA.
@@ -3122,6 +3125,9 @@ DAYS<1.0   : {_below_str}  (proxy_sopr < 1.0 подряд с последнег�
   Realized Price    : {_rp_str if '_rp_str' in dir() else 'н/д'}  (зона: {_rp_zone if '_rp_zone' in dir() else 'н/д'})
   True Market Mean  : {_tmm_str if '_tmm_str' in dir() else 'н/д'}  (зона: {_tmm_zone if '_tmm_zone' in dir() else 'н/д'})
   Supply in Loss    : {_sl_str if '_sl_str' in dir() else 'н/д'}  (зона: {_sl_zone if '_sl_zone' in dir() else 'н/д'})
+  NUPL              : {f"{_nupl_v:.4f}" if '_nupl_v' in dir() and not pd.isna(_nupl_v) else 'н/д'}  → {_nupl_zone if '_nupl_zone' in dir() else 'н/д'}
+  MVRV Z-Score      : {f"{_mvrv_z_v:.4f}" if '_mvrv_z_v' in dir() and not pd.isna(_mvrv_z_v) else 'н/д'}  → {_mvrv_z_zone if '_mvrv_z_zone' in dir() else 'н/д'}
+  OCA               : {_oca_str if '_oca_str' in dir() else 'н/д'}  → {_oca_regime if '_oca_regime' in dir() else 'н/д'}  ({_dist_pct if '_dist_pct' in dir() else 'н/д'} от текущей цены)
   Signal Alignment  : {_sa_verdict}  (счёт: {f'{_sa_score:+d}' if _sa_score is not None else 'н/д'}, * = контрарианский)
 {'='*66}"""    )
 
