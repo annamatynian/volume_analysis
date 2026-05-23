@@ -54,6 +54,36 @@ VIOLATION COST (proven 2025-01-02):
 3. Записать обратно: `Filesystem:write_file` (с полным содержимым)
 
 **ВСЕГДА** используй MCP filesystem tools вместо bash для модификации файлов.
+
+## POWERSHELL: КОДИРОВКА UTF-8 ДЛЯ ЛОГОВ
+
+**Проблема:** PowerShell и `Tee-Object`/`Out-File` игнорируют кодировку нативного процесса Python
+и пишут в cp1251 — кириллица в лог-файлах нечитаема.
+
+**Решение (реализовано 22.05.2026):** Python сам пишет лог через `_Tee`-класс внутри процесса.
+Лог создаётся автоматически в `runs\run_YYYY-MM-DD_HH-MM.txt` при каждом запуске.
+
+**Запуск скрипта:**
+```powershell
+.\venv\Scripts\python.exe -W ignore volume_density.py
+```
+(`-W ignore` подавляет FutureWarning от sklearn, который разрывает пайп PowerShell)
+
+**Чтение лог-файла — ВСЕГДА с флагом `-Encoding utf8`:**
+```powershell
+Get-Content runs\run_YYYY-MM-DD_HH-MM.txt -Encoding utf8
+```
+```powershell
+Get-Content runs\run_YYYY-MM-DD_HH-MM.txt -Encoding utf8 | Select-String "паттерн"
+```
+
+**Последний лог:**
+```powershell
+Get-ChildItem runs\ | Sort-Object LastWriteTime | Select-Object -Last 1
+```
+
+❌ `Get-Content runs\run.txt` — без флага читает как cp1251, кириллица битая
+✅ `Get-Content runs\run.txt -Encoding utf8` — корректное чтение
 # КОНТЕКСТ ПРОЕКТА
 Python HFT система детекции айсберг-ордеров на криптобиржах (asyncio).
 Архитектура: domain.py (бизнес-логика), analyzers.py (детекция), 

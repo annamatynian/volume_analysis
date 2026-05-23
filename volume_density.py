@@ -3134,10 +3134,43 @@ DAYS<1.0   : {_below_str}  (proxy_sopr < 1.0 подряд с последнег�
 
 if __name__ == "__main__":
     import sys
-    # WHY reconfigure: cmd.exe по умолчанию использует cp1251 на Windows,
-    # что не поддерживает emoji. reconfigure(encoding='utf-8') решает это
-    # без изменения самих print-строк и без PYTHONIOENCODING в среде.
+    import datetime
+    import pathlib
+    # WHY reconfigure: PowerShell перехватывает stdout до рекодировки;
+    # reconfigure обеспечивает UTF-8 внутри процесса Python.
     if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8')
         sys.stderr.reconfigure(encoding='utf-8')
-    asyncio.run(liquidity_density_audit())
+    # WHY tee внутри Python: Out-File и Tee-Object PowerShell игнорируют
+    # кодировку нативного процесса и пишут в cp1251. Пишем лог сами —
+    # гарантированный UTF-8 без зависимости от оболочки.
+    _log_dir = pathlib.Path('runs')
+    _log_dir.mkdir(exist_ok=True)
+    _log_path = _log_dir / f'run_{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")}.txt'
+    _log_file = open(_log_path, 'w', encoding='utf-8')
+
+    class _Tee:
+        def __init__(self, *streams):
+            self._streams = streams
+        def write(self, data):
+            for s in self._streams:
+                try:
+                    s.write(data)
+                except (ValueError, OSError):
+                    pass
+        def flush(self):
+            for s in self._streams:
+                try:
+                    s.flush()
+                except (ValueError, OSError):
+                    pass
+        @property
+        def encoding(self):
+            return self._streams[0].encoding
+
+    sys.stdout = _Tee(sys.stdout, _log_file)
+    sys.stderr = _Tee(sys.stderr, _log_file)
+    try:
+        asyncio.run(liquidity_density_audit())
+    finally:
+        _log_file.close()
