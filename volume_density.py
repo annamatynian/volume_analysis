@@ -3077,7 +3077,7 @@ DAYS<1.0   : {_below_str}  (proxy_sopr < 1.0 подряд с последнег�
     # --- Сводная строка по капитуляции ---
     if _onchain_available and '_loss_df' in dir() and not _loss_df.empty:
         _avg_loss_m = _loss_df['lth_realized_loss_usd'].tail(3).mean() / 1_000_000
-        _cap_summary = f"{'DA' if capitulation else 'NET'}  (${_avg_loss_m:.0f} млн среднее за 3 дня)"
+        _cap_summary = f"{'DA' if capitulation else 'NET'}  (${abs(_avg_loss_m):.0f} млн убытка среднее за 3 дня)"
     else:
         _cap_summary = 'данные недоступны'
 

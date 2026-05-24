@@ -112,3 +112,55 @@ class TestCheckCapitulationSignal:
             "check_capitulation_signal должна работать с колонкой 'lth_realized_loss_usd', "
             "которую возвращает get_realized_loss_lth_usd()"
         )
+
+
+class TestCheckCapitulationSignalNegativeValues:
+    """
+    API realized_loss_lth возвращает убытки как ОТРИЦАТЕЛЬНЫЕ числа.
+    Диагностика 2026-05-23: last value = -258_141_195.69 USD.
+
+    Контракт: функция обязана работать с abs() —
+    убыток -350M по модулю превышает порог $300M → капитуляция True.
+
+    WHY отдельный класс: существующие тесты используют положительные
+    mock-значения и не проверяют реальный знак API-данных.
+    """
+
+    THRESHOLD = 300_000_000
+
+    def test_capitulation_true_when_all_negative_losses_exceed_threshold_by_abs(self):
+        """
+        Убытки отрицательные, но |value| > порога → капитуляция True.
+
+        WHY: реальный API возвращает -258M, -350M (знак минус = убыток).
+        abs(-350M) = 350M > 300M — должно быть True.
+
+        WHY RED сейчас: текущая реализация проверяет value > threshold
+        (без abs), поэтому -350M > 300M → False — баг в production.
+        """
+        df = _make_loss_df([
+            -100_000_000,   # ранние дни — ниже порога по модулю
+            -150_000_000,
+            -350_000_000,   # последние 3 — все > $300M по модулю
+            -420_000_000,
+            -510_000_000,
+        ])
+        validator = _make_validator()
+        # WHY: abs(-350M) = 350M > 300M → сигнал капитуляции должен сработать
+        assert validator.check_capitulation_signal(df, threshold_usd=self.THRESHOLD) is True
+
+    def test_capitulation_false_when_negative_losses_below_threshold_by_abs(self):
+        """
+        Убытки отрицательные, но |value| < порога → капитуляция False.
+
+        WHY: гарантирует что abs() не инвертирует логику для малых убытков.
+        abs(-100M) = 100M < 300M → False корректно.
+        """
+        df = _make_loss_df([
+            -50_000_000,
+            -80_000_000,
+            -100_000_000,
+        ])
+        validator = _make_validator()
+        # WHY: abs(-100M) = 100M < 300M → капитуляции нет
+        assert validator.check_capitulation_signal(df, threshold_usd=self.THRESHOLD) is False

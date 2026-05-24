@@ -121,4 +121,7 @@ class OnChainValidator:
         if realized_loss_df.empty:
             return False
         recent = realized_loss_df.tail(3)
-        return bool((recent['lth_realized_loss_usd'] > threshold_usd).all())
+        # WHY abs(): API realized_loss_lth возвращает убытки как отрицательные числа
+        # (диагностика 2026-05-23: -258_141_195.69 USD).
+        # Без abs() условие -258M > 300M никогда не выполняется → капитуляция не срабатывает.
+        return bool((recent['lth_realized_loss_usd'].abs() > threshold_usd).all())
