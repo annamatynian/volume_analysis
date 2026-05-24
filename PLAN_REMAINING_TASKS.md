@@ -209,8 +209,8 @@ missing (API 404/403) → не влияет на score, отдельный сп�
 [БЛОК 3 — после Блока 2]
   L3-1  signal_polarity()                ✅ ЗАКРЫТ  (53 теста)
   L3-2  build_alignment() + AlignmentResult  ✅ ЗАКРЫТ  (33 теста + smoke)
-  L3-3  блок [SIGNAL ALIGNMENT] в оркестраторе   ⏳ СЛЕДУЮЩЕЕ
-  L3-4  LLM-резюме (опционально)
+  L3-3  блок [SIGNAL ALIGNMENT] в оркестраторе   ✅ ЗАКРЫТ (2026-05-23, 745p/76s/0f)
+  L3-4  LLM-резюме (mozart_llm.py)               ⏳ СЛЕДУЮЩЕЕ
 ```
 
 ---
