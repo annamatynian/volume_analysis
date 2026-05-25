@@ -466,3 +466,44 @@ class TestUnknownInputs:
         # WHY: Пустая метка = API вернул пустое значение или classify-функция
         # зафейлила молча. Принудительный ValueError заставляет оркестратор
         # обработать н/д явно (передать в missing, не в bullish/bearish).
+
+
+# ===========================================================================
+# НВ-03 | BTC Dominance — ротация ликвидности
+# ===========================================================================
+
+class TestNV03BtcDominanceTrend:
+    """Контракт НВ-03: classify_btc_dominance_trend → ROTATION_ALTCOIN/NEUTRAL/ROTATION_BTC."""
+
+    def test_rotation_altcoin_is_bullish(self):
+        result = signal_polarity("НВ-03", "ROTATION_ALTCOIN")
+        assert result == "BULLISH", (
+            # WHY: снижение BTC.D = ликвидность идёт в альты — возвращение риск-аппетита.
+            # Mozart (пост 10.05.2026): «рынок часто идёт по цепочке: низкая капа →
+            # средняя → высокая» — рост альтов предшествует росту средней
+            # капы (SOL/LINK/ADA), который предшествует росту BTC. BEARISH/NEUTRAL здесь
+            # пропустили бы опережающий сигнал в build_alignment().
+        )
+
+    def test_neutral_is_neutral(self):
+        result = signal_polarity("НВ-03", "NEUTRAL")
+        assert result == "NEUTRAL", (
+            # WHY: движение BTC.D в пределах шума — сигнал не активирован;
+            # BULLISH здесь = ложный +1 в score при отсутствии направленной ротации.
+        )
+
+    def test_rotation_btc_is_neutral(self):
+        result = signal_polarity("НВ-03", "ROTATION_BTC")
+        assert result == "NEUTRAL", (
+            # WHY (FORMALIZED): рост BTC.D амбивален: может означать BTC-сезон
+            # (хорошо для BTC) или риск-офф (плохо для рынка). Mozart не формулирует
+            # этот вектор явно; NEUTRAL исключает ложный +1 или -1 в score.
+        )
+
+    def test_unknown_label_raises(self):
+        with pytest.raises(ValueError):
+            signal_polarity("НВ-03", "НЕИЗВЕСТНАЯ")
+        # WHY: если classify_btc_dominance_trend добавит новую зону без
+        # обновления таблицы — ValueError принудит разработчика
+        # заметить рассинхрон, а не получить тихий NEUTRAL.
+

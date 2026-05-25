@@ -2908,6 +2908,42 @@ DAYS<1.0   : {_below_str}  (proxy_sopr < 1.0 подряд с последнег�
 {'='*66}"""    )
 
     # ------------------------------------------------------------------
+    # НВ-03 | BTC Dominance — ротация ликвидности (CoinGecko)
+    # ------------------------------------------------------------------
+    # WHY отдельный try: CoinGecko может быть недоступен; ошибка не должна
+    # прерывать L3-3 Signal Alignment и последующие блоки.
+    # WHY инициализация None до try: переменные видны в FINAL VERDICT без in dir().
+    _btc_d_current = None
+    _btc_d_30d_ago = None
+    _nv03_label    = None
+    try:
+        from coingecko_client import get_btc_dominance_with_history as _get_btc_d
+        from mozart_signals   import classify_btc_dominance_trend    as _cls_nv03_block
+        from mozart_config    import MOZART_CONFIG as _MC_NV03
+        _btc_d_current, _btc_d_30d_ago = _get_btc_d()
+        _nv03_thr = _MC_NV03['btc_dominance_rotation_threshold_pct']
+        if _btc_d_30d_ago is not None:
+            _nv03_label  = _cls_nv03_block(_btc_d_current, _btc_d_30d_ago)
+            _nv03_delta  = _btc_d_current - _btc_d_30d_ago
+            _nv03_cur_s  = (f"{_btc_d_current:.2f}%  "
+                            f"(30d ago: {_btc_d_30d_ago:.2f}%  "
+                            f"Δ: {_nv03_delta:+.2f}%)")
+        else:
+            _nv03_cur_s  = (f"{_btc_d_current:.2f}%  "
+                            f"(история < 30 дней — кэш накапливается)")
+        print(f"""
+[НВ-03 | BTC DOMINANCE]
+{'-'*66}
+BTC.D (текущее) : {_nv03_cur_s}
+Ротация 30д    : {_nv03_label if _nv03_label else 'н/д (недостаточно истории)'}
+  ROTATION_ALTCOIN : BTC.D снизился > {_nv03_thr:.1f} п.п. — альты опережают BTC, micro→mid→BTC
+  NEUTRAL          : BTC.D в пределах шума (±{_nv03_thr:.1f} п.п.) — ротации нет
+  ROTATION_BTC     : BTC.D вырос > {_nv03_thr:.1f} п.п. — ликвидность уходит из альтов в BTC
+{'-'*66}""")
+    except Exception as _nv03_e:
+        print(f"\n[НВ-03 | BTC DOMINANCE]\n{'-'*66}\nНедоступен: {_nv03_e}")
+
+    # ------------------------------------------------------------------
     # L3-3 | Signal Alignment — агрегация 14 сигналов Mozart
     # ------------------------------------------------------------------
     # WHY здесь: все on-chain данные уже получены выше; df и exchange в scope.
@@ -2934,6 +2970,7 @@ DAYS<1.0   : {_below_str}  (proxy_sopr < 1.0 подряд с последнег�
             count_consecutive_red_months as _cnt_h02,
             classify_red_months_regime   as _cls_h02,
             calculate_rsi                as _calc_rsi,
+            classify_btc_dominance_trend as _cls_nv03,
         )
 
         # --- Н-01 RSI (df['close'] всегда в scope) ---
@@ -2997,6 +3034,7 @@ DAYS<1.0   : {_below_str}  (proxy_sopr < 1.0 подряд с последнег�
             'МБ-03'   : None,   # get_sth_profit() не реализован → missing
             'Н-01'    : _sa_rsi_label,
             'Н-02'    : _sa_h02,
+            'НВ-03'   : _nv03_label,   # None → missing если истории < 30 дней
         }
 
         _alignment = build_alignment(_signals_sa)
@@ -3045,16 +3083,43 @@ DAYS<1.0   : {_below_str}  (proxy_sopr < 1.0 подряд с последнег�
     try:
         if '_alignment' in dir():
             from mozart_llm import generate_alignment_summary as _gen_llm_summary
+            # WHY полный список метрик: LLM должен видеть числа для каждого
+            # активного сигнала, иначе описывает метку без контекста и может
+            # галлюцинировать значения. Все переменные определены выше в блоке
+            # on-chain; dir()-guard защищает от случая когда API недоступен.
+            # WHY vwap_deviation вычисляется здесь повторно: _vwap_dev определяется
+            # в FINAL VERDICT секции ниже по коду — inline расчёт дешевле
+            # рефакторинга порядка блоков. calculate_vwap_deviation() — чистая функция.
             _raw_metrics_llm = {
-                'lth_sopr':     _lth_sopr_v if '_lth_sopr_v' in dir() and not pd.isna(_lth_sopr_v) else None,
-                'sth_sopr':     _sth_sopr_v if '_sth_sopr_v' in dir() and not pd.isna(_sth_sopr_v) else None,
-                'lth_mvrv':     _lth_mvrv_v if '_lth_mvrv_v' in dir() and not pd.isna(_lth_mvrv_v) else None,
-                'sth_mvrv':     _sth_mvrv_v if '_sth_mvrv_v' in dir() and not pd.isna(_sth_mvrv_v) else None,
-                'nupl_lth':     _nupl_lth_v if '_nupl_lth_v' in dir() and not pd.isna(_nupl_lth_v) else None,
-                'nupl_sth':     _nupl_sth_v if '_nupl_sth_v' in dir() and not pd.isna(_nupl_sth_v) else None,
-                'etf_flow_btc': _etf_v      if '_etf_v'      in dir() and not pd.isna(_etf_v)      else None,
-                'rsi':          (_calc_rsi(df['close'].tolist())
-                                 if '_calc_rsi' in dir() else None),
+                # --- Holder Structure (М-01..М-06) ---
+                'lth_sopr':            _lth_sopr_v if '_lth_sopr_v' in dir() and not pd.isna(_lth_sopr_v) else None,
+                'sth_sopr':            _sth_sopr_v if '_sth_sopr_v' in dir() and not pd.isna(_sth_sopr_v) else None,
+                'lth_mvrv':            _lth_mvrv_v if '_lth_mvrv_v' in dir() and not pd.isna(_lth_mvrv_v) else None,
+                'sth_mvrv':            _sth_mvrv_v if '_sth_mvrv_v' in dir() and not pd.isna(_sth_mvrv_v) else None,
+                'nupl_lth':            _nupl_lth_v if '_nupl_lth_v' in dir() and not pd.isna(_nupl_lth_v) else None,
+                'nupl_sth':            _nupl_sth_v if '_nupl_sth_v' in dir() and not pd.isna(_nupl_sth_v) else None,
+                # --- М-07+08: Net Position — LLM видел метку без чисел накопления ---
+                'lth_net_pos_30d_btc': _lth_np30_v if '_lth_np30_v' in dir() and not pd.isna(_lth_np30_v) else None,
+                'sth_net_pos_30d_btc': _sth_np30_v if '_sth_np30_v' in dir() and not pd.isna(_sth_np30_v) else None,
+                # --- М-09: Z-score и волатильность — детали паттерна В ---
+                'sth_rp_zscore':       _z_current  if '_z_current'  in dir() and not pd.isna(_z_current)  else None,
+                'btc_vol_7d_pct':      _vol_7d_pct if '_vol_7d_pct' in dir() and not pd.isna(_vol_7d_pct) else None,
+                # --- М-10: Realized Loss MA7 — LLM видел зону без числа убытка ---
+                'lth_realized_loss_ma7_usd': _loss_ma7 if '_loss_ma7' in dir() and not pd.isna(_loss_ma7) else None,
+                # --- М-11: ETF Flow ---
+                'etf_flow_btc':        _etf_v      if '_etf_v'      in dir() and not pd.isna(_etf_v)      else None,
+                # --- Н-01: RSI ---
+                'rsi':                 (_calc_rsi(df['close'].tolist()) if '_calc_rsi' in dir() else None),
+                # --- МБ-04/06/07: контекстные метрики (не в alignment, но важны для описания) ---
+                'supply_loss_btc':     _sl_v     if '_sl_v'     in dir() and not pd.isna(_sl_v)     else None,
+                'nupl_market':         _nupl_v   if '_nupl_v'   in dir() and not pd.isna(_nupl_v)   else None,
+                'mvrv_zscore':         _mvrv_z_v if '_mvrv_z_v' in dir() and not pd.isna(_mvrv_z_v) else None,
+                # --- VWAP: inline расчёт, т.к. _vwap_dev определён позже в FINAL VERDICT ---
+                'vwap_deviation_pct':  (
+                    float(_s.iloc[-1]) if (_s := calculate_vwap_deviation(df)).notna().any() else None
+                ),
+                # --- НВ-03: BTC Dominance ---
+                'btc_dominance_pct':   _btc_d_current if _btc_d_current is not None else None,
             }
             _llm_summary = _gen_llm_summary(_alignment, _raw_metrics_llm)
             print(f"\n[MOZART SIGNAL SUMMARY]\n{'-'*66}\n{_llm_summary}")
@@ -3154,14 +3219,15 @@ DAYS<1.0   : {_below_str}  (proxy_sopr < 1.0 подряд с последнег�
   NUPL              : {f"{_nupl_v:.4f}" if '_nupl_v' in dir() and not pd.isna(_nupl_v) else 'н/д'}  → {_nupl_zone if '_nupl_zone' in dir() else 'н/д'}
   MVRV Z-Score      : {f"{_mvrv_z_v:.4f}" if '_mvrv_z_v' in dir() and not pd.isna(_mvrv_z_v) else 'н/д'}  → {_mvrv_z_zone if '_mvrv_z_zone' in dir() else 'н/д'}
   OCA               : {_oca_str if '_oca_str' in dir() else 'н/д'}  → {_oca_regime if '_oca_regime' in dir() else 'н/д'}  ({_dist_pct if '_dist_pct' in dir() else 'н/д'} от текущей цены)
+  BTC Dominance     : {f"{_btc_d_current:.2f}%" if _btc_d_current is not None else 'н/д'}  → {_nv03_label if _nv03_label else 'н/д (кэш накапливается)'}
   Signal Alignment  : {_sa_verdict}  (счёт: {f'{_sa_score:+d}' if _sa_score is not None else 'н/д'}, * = контрарианский)
 {'='*66}"""    )
 
 
 if __name__ == "__main__":
     import sys
-    import datetime
     import pathlib
+    from datetime import datetime as _dt_now
     # WHY reconfigure: PowerShell перехватывает stdout до рекодировки;
     # reconfigure обеспечивает UTF-8 внутри процесса Python.
     if hasattr(sys.stdout, 'reconfigure'):
@@ -3172,7 +3238,7 @@ if __name__ == "__main__":
     # гарантированный UTF-8 без зависимости от оболочки.
     _log_dir = pathlib.Path('runs')
     _log_dir.mkdir(exist_ok=True)
-    _log_path = _log_dir / f'run_{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")}.txt'
+    _log_path = _log_dir / f'run_{_dt_now.now().strftime("%Y-%m-%d_%H-%M")}.txt'
     _log_file = open(_log_path, 'w', encoding='utf-8')
 
     class _Tee:

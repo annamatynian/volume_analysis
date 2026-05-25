@@ -3,7 +3,7 @@
 # Архитектура: NEXT_SESSION_2026-05-23-final.md → Задача 2
 #
 # API: google-genai (новый SDK). Ключ из переменной окружения GOOGLE_API_KEY.
-#   Модель: gemini-2.0-flash — быстрая и дешёвая для коротких резюме.
+#   Модель: gemini-2.5-flash — gemini-2.0-flash имеет limit: 0 на AI Studio free tier.
 #   Импорт: from google import genai  (НЕ google.generativeai)
 #
 # TDD: только smoke-test (tests/test_mozart_llm_smoke.py).
@@ -139,7 +139,7 @@ SIGNAL_CONTEXT: dict[str, Optional[str]] = {
 def generate_alignment_summary(
     alignment: AlignmentResult,
     raw_metrics: dict[str, Optional[float]],
-    max_tokens: int = 350,
+    max_tokens: int = 400,
 ) -> str:
     """
     Генерирует 3–5 предложений описания текущего состояния рынка
@@ -149,7 +149,15 @@ def generate_alignment_summary(
         alignment:   AlignmentResult из mozart_alignment.build_alignment().
         raw_metrics: Словарь числовых значений метрик.
                      Значения None → фильтруются, не попадают в промпт.
-        max_tokens:  Максимум токенов ответа (default: 350 ≈ 3–5 предложений).
+        max_tokens:  Максимум видимых токенов вывода (default: 400).
+                     WHY 400 + thinking_budget=0: калибровка 2026-05-25 показала,
+                     что Gemini 2.5 Flash по умолчанию тратит thinking tokens
+                     из бюджета max_output_tokens: при лимите 600 вывод 26 слов,
+                     при 8192 — 122 слова (естественный объём).
+                     thinking_budget=0 отключает режим рассуждений — весь бюджет
+                     идёт на вывод. Для фактографического резюме CoT не нужен.
+                     Калибровка подтверждена живым прогоном 2026-05-25: вывод полный,
+                     5 абзацев, заканчивается точкой (все 17 метрик покрыты).
 
     Returns:
         str: 3–5 предложений на русском языке.
@@ -225,11 +233,16 @@ def generate_alignment_summary(
     api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
     client = genai.Client(api_key=api_key)
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
             max_output_tokens=max_tokens,
             temperature=0.3,
+            # WHY thinking_budget=0: калибровка 2026-05-25 показала что Gemini 2.5 Flash
+            # без этого параметра использует thinking tokens из бюджета
+            # max_output_tokens, сокращая реальный вывод до 26 слов при лимите 600.
+            # Для фактографического резюме CoT избыточен.
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
         ),
     )
     return response.text

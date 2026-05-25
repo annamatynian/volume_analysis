@@ -117,6 +117,16 @@ _POLARITY_TABLE: dict[str, dict[str, str]] = {
         "RARE":    "BULLISH",   # CONTRARIAN: редкость = зона накопления
         "EXTREME": "BULLISH",   # CONTRARIAN: прецедент 2018 (финал медвежки)
     },
+    # --- НВ-03 | BTC Dominance — ротация ликвидности ---
+    # Источник: пост 10.05.2026 (НВ-03, PLAN_MOZART_PATTERNS.md ЧАСТЬ 4)
+    # API: CoinGecko /api/v3/global → поле btc_dominance (%)
+    # ROTATION_BTC → NEUTRAL (FORMALIZED): рост BTC.D амбивален (BTC-сезон вс риск-офф);
+    #   Mozart не формулирует этот вектор явно; NEUTRAL исключает ложный сигнал.
+    "НВ-03": {
+        "ROTATION_ALTCOIN": "BULLISH",   # риск-аппетит возвращается: micro→mid→BTC цепочка
+        "NEUTRAL":          "NEUTRAL",
+        "ROTATION_BTC":     "NEUTRAL",   # FORMALIZED: нет явной интерпретации Mozart
+    },
 }
 
 

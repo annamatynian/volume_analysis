@@ -211,6 +211,9 @@ missing (API 404/403) → не влияет на score, отдельный сп�
   L3-2  build_alignment() + AlignmentResult  ✅ ЗАКРЫТ  (33 теста + smoke)
   L3-3  блок [SIGNAL ALIGNMENT] в оркестраторе   ✅ ЗАКРЫТ (2026-05-23, 745p/76s/0f)
   L3-4  LLM-резюме (mozart_llm.py)               ✅ ЗАКРЫТ (2026-05-24, 749p/76s/0f)
+  НВ-03 BTC Dominance (CoinGecko)                ✅ ЗАКРЫТ (2026-05-25, 778p/76s/0f)
+  БАГ   datetime import в volume_density.py      ✅ ЗАКРЫТ (2026-05-25)
+  БАГ   Mozart LLM gemini-2.0-flash quota=0      ✅ ЗАКРЫТ (2026-05-25, → gemini-2.5-flash)
 ```
 
 ---

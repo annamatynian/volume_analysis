@@ -1059,3 +1059,48 @@ def classify_lth_realized_profit_regime(profit_7d_ma_usd: float) -> str:
         return "HIGH"
     return "NORMAL"
 
+
+# ---------------------------------------------------------------------------
+# НВ-03 | BTC Dominance — ротация ликвидности (пост 10.05.2026)
+# ---------------------------------------------------------------------------
+
+def classify_btc_dominance_trend(btc_d_current: float, btc_d_30d_ago: float) -> str:
+    """
+    Классифицирует направление BTC Dominance за скользящий месяц (пост 10.05.2026).
+
+    API: CoinGecko /api/v3/global → поле btc_dominance (float, %).
+
+    Семантика зон:
+      delta = btc_d_current - btc_d_30d_ago
+
+      ROTATION_ALTCOIN : delta < -threshold
+                         BTC.D значительно снизился за месяц — ликвидность ротирует в альты.
+                         Mozart (пост 10.05.2026): «рынок часто идет по цепочке:
+                         низкая капа → средняя → высокая».
+
+      ROTATION_BTC     : delta > +threshold
+                         BTC.D значительно вырос за месяц — ликвидность уходит из альтов в BTC.
+
+      NEUTRAL          : -threshold <= delta <= +threshold
+                         Движение BTC.D в пределах шума — направленной ротации нет.
+
+    Границы (строгое < / >):
+      delta == -threshold → NEUTRAL  (не ROTATION_ALTCOIN)
+      delta == +threshold → NEUTRAL  (не ROTATION_BTC)
+
+    WHY строгое < для ROTATION_ALTCOIN:
+        Mozart (пост 10.05.2026): «снижение BTC.D > 2%» — строгое неравенство.
+        Ровно на пороге = сигнал не активирован; ошибка → ложный ROTATION_ALTCOIN
+        при каждом движении ровно на 2 п.п. (частое рыночное значение).
+
+    Порог из MOZART_CONFIG [«btc_dominance_rotation_threshold_pct»] — не хардкодится.
+    """
+    threshold = float(MOZART_CONFIG["btc_dominance_rotation_threshold_pct"])
+    delta = btc_d_current - btc_d_30d_ago
+
+    if delta < -threshold:
+        return "ROTATION_ALTCOIN"
+    if delta > threshold:
+        return "ROTATION_BTC"
+    return "NEUTRAL"
+
