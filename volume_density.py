@@ -3037,6 +3037,32 @@ DAYS<1.0   : {_below_str}  (proxy_sopr < 1.0 подряд с последнег�
     except Exception as _sa_e:
         print(f"\n[SIGNAL ALIGNMENT]\n{'='*66}\nНедоступен: {_sa_e}")
 
+    # --- L3-4: Mozart LLM резюме ---
+    # WHY try/except: апи может быть недоступно, GOOGLE_API_KEY не установлен —
+    # оркестратор продолжает работу без LLM-суммари.
+    # WHY '_alignment' in dir(): _alignment определён внутри try-блока L3-3;
+    #   если тот блок упал — здесь нечего вызывать.
+    try:
+        if '_alignment' in dir():
+            from mozart_llm import generate_alignment_summary as _gen_llm_summary
+            _raw_metrics_llm = {
+                'lth_sopr':     _lth_sopr_v if '_lth_sopr_v' in dir() and not pd.isna(_lth_sopr_v) else None,
+                'sth_sopr':     _sth_sopr_v if '_sth_sopr_v' in dir() and not pd.isna(_sth_sopr_v) else None,
+                'lth_mvrv':     _lth_mvrv_v if '_lth_mvrv_v' in dir() and not pd.isna(_lth_mvrv_v) else None,
+                'sth_mvrv':     _sth_mvrv_v if '_sth_mvrv_v' in dir() and not pd.isna(_sth_mvrv_v) else None,
+                'nupl_lth':     _nupl_lth_v if '_nupl_lth_v' in dir() and not pd.isna(_nupl_lth_v) else None,
+                'nupl_sth':     _nupl_sth_v if '_nupl_sth_v' in dir() and not pd.isna(_nupl_sth_v) else None,
+                'etf_flow_btc': _etf_v      if '_etf_v'      in dir() and not pd.isna(_etf_v)      else None,
+                'rsi':          (_calc_rsi(df['close'].tolist())
+                                 if '_calc_rsi' in dir() else None),
+            }
+            _llm_summary = _gen_llm_summary(_alignment, _raw_metrics_llm)
+            print(f"\n[MOZART SIGNAL SUMMARY]\n{'-'*66}\n{_llm_summary}")
+        else:
+            print(f"\n[MOZART SIGNAL SUMMARY]\n{'-'*66}\nНедоступен: Signal Alignment не выполнен.")
+    except Exception as _llm_e:
+        print(f"\n[MOZART SIGNAL SUMMARY]\n{'-'*66}\nНедоступен: {_llm_e}")
+
     # --- Этап В: Прунинг старых ZIP-файлов ---
     # WHY в конце оркестратора: все ZIP уже обработаны в parquet-кэш к этому моменту.
     # WHY keep_days=45: anchor period 30 дней + 15 дней запас для повторных запусков.

@@ -11,10 +11,12 @@ Smoke-тест для generate_alignment_summary() из mozart_llm.py (ветк�
       3. Длина > 50 символов (защита от пустого / обрезанного ответа).
       4. Строка не содержит 'None' (None в f-string = незафильтрованная метрика).
       5. Нет слов прямых рекомендаций (функция описывает, не советует).
+      6. Ровно 1 вызов models.generate_content() (нет дублирования запросов).
 
-СТРАТЕГИЯ МОКА:
-    anthropic.Anthropic патчится через unittest.mock.patch.
-    Тест не делает реальных HTTP-запросов — не зависит от ANTHROPIC_API_KEY.
+СТРАТЕГИЯ МОКА (google-genai SDK):
+    mozart_llm.genai.Client патчится через unittest.mock.patch.
+    client.models.generate_content().text == синтетический текст.
+    Тест не делает реальных HTTP-запросов — не зависит от GOOGLE_API_KEY.
     Мок возвращает нейтральный синтетический текст (не API-реалистичный).
 """
 
@@ -32,7 +34,6 @@ from mozart_alignment import AlignmentResult
 def alignment_mixed():
     """
     Смешанный AlignmentResult: есть бычьи, медвежьи, нейтральные и missing.
-    Используем нейтральные ID — не привязываемся к конкретным меткам.
     """
     return AlignmentResult(
         bullish=['Н-01', 'М-09'],
@@ -90,25 +91,25 @@ def raw_metrics_all_none():
 # ---------------------------------------------------------------------------
 
 _MOCK_LLM_TEXT = (
-    "Синтетический тестовый ответ. "
+    "Синтетический тестовый ответ мока. "
     "LTH SOPR находится ниже рубикона безубытка согласно методологии Mozart. "
     "RSI дневного таймфрейма находится в зоне перепроданности. "
-    "Это тестовый текст длиной более пятидесяти символов."
+    "Это тестовый текст достаточной длины для прохождения smoke-теста."
 )
 
 
 # ---------------------------------------------------------------------------
-# Вспомогательная функция — строит замоканный клиент Anthropic
+# Вспомогательная функция — строит замоканный genai.Client
 # ---------------------------------------------------------------------------
 
 def _make_mock_client(text: str = _MOCK_LLM_TEXT) -> MagicMock:
     """
-    Возвращает MagicMock, имитирующий anthropic.Anthropic().
-    messages.create().content[0].text == text
+    Возвращает MagicMock, имитирующий genai.Client().
+    client.models.generate_content(...).text == text
     """
-    mock_instance = MagicMock()
-    mock_instance.messages.create.return_value.content = [MagicMock(text=text)]
-    return mock_instance
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value.text = text
+    return mock_client
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +125,7 @@ def test_smoke_returns_nonempty_string(alignment_mixed, raw_metrics_partial):
     """
     from mozart_llm import generate_alignment_summary
 
-    with patch('mozart_llm.anthropic.Anthropic') as mock_cls:
+    with patch('mozart_llm.genai.Client') as mock_cls:
         mock_cls.return_value = _make_mock_client()
         result = generate_alignment_summary(alignment_mixed, raw_metrics_partial)
 
@@ -147,22 +148,18 @@ def test_smoke_returns_nonempty_string(alignment_mixed, raw_metrics_partial):
 # Тест 2: нет слов прямых рекомендаций
 # ---------------------------------------------------------------------------
 
-_FORBIDDEN_WORDS = ('купи', 'продай', 'рекомендую', 'рекомендую', 'войди', 'выйди')
+_FORBIDDEN_WORDS = ('купи', 'продай', 'рекомендую', 'войди', 'выйди')
 
 
 def test_smoke_no_recommendation_words(alignment_mixed, raw_metrics_partial):
     """
     WHY: generate_alignment_summary() — описательная функция, не советник.
     Промпт явно запрещает рекомендации. Тест защищает контракт:
-    если промпт изменится и LLM начнёт давать советы — тест упадёт.
-
-    Мок возвращает нейтральный текст без запрещённых слов →
-    тест проверяет что функция не добавляет слова самостоятельно
-    (например, в постобработке результата).
+    если функция начнёт добавлять запрещённые слова в постобработке — тест упадёт.
     """
     from mozart_llm import generate_alignment_summary
 
-    with patch('mozart_llm.anthropic.Anthropic') as mock_cls:
+    with patch('mozart_llm.genai.Client') as mock_cls:
         mock_cls.return_value = _make_mock_client()
         result = generate_alignment_summary(alignment_mixed, raw_metrics_partial)
 
@@ -183,46 +180,43 @@ def test_smoke_empty_alignment_does_not_crash(alignment_empty, raw_metrics_all_n
     """
     WHY: AlignmentResult с пустыми bullish/bearish/neutral = все сигналы missing.
     Такая ситуация реальна при массовых 403/404 от API BGeometrics.
-    Функция не должна падать — оркестратор обёрнут в try/except,
-    но лучше чтобы функция сама корректно обработала пустой контекст.
-
-    WHY нет проверки содержания: даже с пустым контекстом LLM что-то ответит.
-    Достаточно проверить что нет исключения и есть непустая строка.
+    Функция не должна падать — достаточно проверить отсутствие исключения
+    и наличие непустой строки.
     """
     from mozart_llm import generate_alignment_summary
 
-    with patch('mozart_llm.anthropic.Anthropic') as mock_cls:
+    with patch('mozart_llm.genai.Client') as mock_cls:
         mock_cls.return_value = _make_mock_client(
             "Данные по сигналам отсутствуют. "
             "Все метрики недоступны из-за ограничений API. "
-            "Анализ невозможен на текущий момент из-за отсутствия данных."
+            "Анализ невозможен на текущий момент из-за отсутствия данных Mozart."
         )
         # WHY: не должно быть исключения — оркестратор ожидает str, не Exception
         result = generate_alignment_summary(alignment_empty, raw_metrics_all_none)
 
-    assert isinstance(result, str)  # WHY: TypeError при print() если не str
-    assert len(result) > 0          # WHY: пустая строка = тихий сбой API-клиента
+    assert isinstance(result, str)   # WHY: TypeError при print() если не str
+    assert len(result) > 0           # WHY: пустая строка = тихий сбой API-клиента
 
 
 # ---------------------------------------------------------------------------
-# Тест 4: API клиент вызывается ровно один раз
+# Тест 4: generate_content() вызывается ровно один раз
 # ---------------------------------------------------------------------------
 
 def test_smoke_api_called_once(alignment_mixed, raw_metrics_partial):
     """
     WHY: двойной вызов API = баг (дублирование запросов = двойная стоимость).
-    Ноль вызовов = функция вернула что-то из кеша или хардкода.
-    Контракт: ровно один вызов messages.create() на вызов generate_alignment_summary().
+    Ноль вызовов = функция вернула хардкод или кеш без реального запроса.
+    Контракт: ровно 1 вызов models.generate_content() на 1 вызов функции.
     """
     from mozart_llm import generate_alignment_summary
 
-    with patch('mozart_llm.anthropic.Anthropic') as mock_cls:
-        mock_instance = _make_mock_client()
-        mock_cls.return_value = mock_instance
+    with patch('mozart_llm.genai.Client') as mock_cls:
+        mock_client = _make_mock_client()
+        mock_cls.return_value = mock_client
         generate_alignment_summary(alignment_mixed, raw_metrics_partial)
 
-    call_count = mock_instance.messages.create.call_count
+    call_count = mock_client.models.generate_content.call_count
     # WHY exactly 1: 0 = нет вызова (фиктивный ответ), 2+ = дублирование запросов
     assert call_count == 1, (
-        f"messages.create() вызвана {call_count} раз(а), ожидалась 1"
+        f"models.generate_content() вызвана {call_count} раз(а), ожидалась ровно 1"
     )
