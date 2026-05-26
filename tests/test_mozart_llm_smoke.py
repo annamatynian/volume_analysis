@@ -220,3 +220,183 @@ def test_smoke_api_called_once(alignment_mixed, raw_metrics_partial):
     assert call_count == 1, (
         f"models.generate_content() вызвана {call_count} раз(а), ожидалась ровно 1"
     )
+
+
+# ---------------------------------------------------------------------------
+# Тест 5: нет слов прогноза цены
+# ---------------------------------------------------------------------------
+
+_FORBIDDEN_FORECAST = (
+    'вырастет', 'упадёт', 'достигнет', 'пойдёт вверх', 'пойдёт вниз',
+    'будет расти', 'будет падать', 'может вырасти', 'ожидается рост',
+    'ожидается падение', 'продолжит рост', 'продолжит падение',
+)
+
+
+def test_smoke_no_forecast_words(alignment_mixed, raw_metrics_partial):
+    """
+    WHY: generate_alignment_summary() — описательная функция, не прогностическая.
+    Промпт явно запрещает прогнозы цены. Тест ловит случай если постобработка
+    или смена модели добавит прогнозные формулировки в вывод.
+    Сначала проверяем что детекция работает (bad_mock содержит запрещённое слово),
+    затем что clean_mock проходит без нарушений.
+    """
+    from mozart_llm import generate_alignment_summary
+
+    # --- Шаг 1: убеждаемся что детекция вообще работает ---
+    bad_text = (
+        "LTH SOPR ниже 1.0. "
+        "Согласно методологии Mozart цена вырастет до следующего уровня. "
+        "ETF оттоки продолжают оказывать давление на рынок."
+    )
+    with patch('mozart_llm.genai.Client') as mock_cls:
+        mock_cls.return_value = _make_mock_client(bad_text)
+        bad_result = generate_alignment_summary(alignment_mixed, raw_metrics_partial)
+
+    # WHY: если bad_text не содержит запрещённых слов — тест бесполезен
+    assert any(w in bad_result.lower() for w in _FORBIDDEN_FORECAST), (
+        "Детекция прогнозных слов не работает — bad_mock должен содержать хотя бы одно; "
+        "проверь список _FORBIDDEN_FORECAST"
+    )
+
+    # --- Шаг 2: clean_mock не должен содержать прогнозных слов ---
+    with patch('mozart_llm.genai.Client') as mock_cls:
+        mock_cls.return_value = _make_mock_client()  # стандартный нейтральный мок
+        clean_result = generate_alignment_summary(alignment_mixed, raw_metrics_partial)
+
+    clean_lower = clean_result.lower()
+    for word in _FORBIDDEN_FORECAST:
+        # WHY каждое слово отдельно: чёткое сообщение о нарушении
+        assert word not in clean_lower, (
+            f"Слово прогноза '{word}' найдено в результате — функция нарушает контракт "
+            "'только факты, без прогнозов цены'"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Тест 6: нет причинно-следственных выводов о будущем
+# ---------------------------------------------------------------------------
+
+_FORBIDDEN_CAUSAL_FUTURE = (
+    'поэтому цена',
+    'что приведёт к',
+    'что вызовет',
+    'следовательно цена',
+    'обусловит рост',
+    'обусловит падение',
+    'повлечёт',
+    'из-за чего цена',
+    'это означает что цена',
+)
+
+
+def test_smoke_no_causal_future_language(alignment_mixed, raw_metrics_partial):
+    """
+    WHY: Mozart-анализ = описание факта метрики, не вывод о будущем.
+    'LTH SOPR < 1 → что приведёт к росту' — запрещённый паттерн.
+    'LTH SOPR < 1 — продажи ниже себестоимости' — разрешённый паттерн.
+    Тест защищает границу между описанием (допустимо) и причинным прогнозом
+    (запрещено).
+    """
+    from mozart_llm import generate_alignment_summary
+
+    with patch('mozart_llm.genai.Client') as mock_cls:
+        mock_cls.return_value = _make_mock_client()
+        result = generate_alignment_summary(alignment_mixed, raw_metrics_partial)
+
+    result_lower = result.lower()
+    for phrase in _FORBIDDEN_CAUSAL_FUTURE:
+        assert phrase not in result_lower, (
+            f"Причинно-следственный прогноз '{phrase}' найден — нарушение контракта "
+            "'описание фактов без выводов о будущем'"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Тест 7: промпт содержит ID активных сигналов
+# ---------------------------------------------------------------------------
+
+def test_prompt_contains_active_signal_ids(alignment_mixed, raw_metrics_partial):
+    """
+    WHY: generate_alignment_summary() должна передавать в промпт ID активных
+    сигналов (bullish + bearish + neutral из AlignmentResult).
+    Если ID отсутствуют — LLM анализирует без контекста Mozart и галлюцинирует.
+    alignment_mixed: bullish=['Н-01','М-09'], neutral=['М-12'], bearish=['М-05'].
+    Тест проверяет структуру промпта, а не вывод LLM.
+    """
+    from mozart_llm import generate_alignment_summary
+
+    with patch('mozart_llm.genai.Client') as mock_cls:
+        mock_client = _make_mock_client()
+        mock_cls.return_value = mock_client
+        generate_alignment_summary(alignment_mixed, raw_metrics_partial)
+
+    call_args = mock_client.models.generate_content.call_args
+    # contents может быть positional arg[1] или keyword arg 'contents'
+    prompt = call_args.kwargs.get('contents') or (
+        call_args.args[1] if len(call_args.args) > 1 else str(call_args)
+    )
+
+    for signal_id in ('Н-01', 'М-09', 'М-12', 'М-05'):
+        # WHY: ID сигнала в промпте = LLM получила контекст Mozart для этого сигнала
+        assert signal_id in prompt, (
+            f"ID сигнала '{signal_id}' отсутствует в промпте — "
+            "LLM не получила контекст Mozart, возможна галлюцинация"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Тест 8: контрарианские сигналы помечены в промпте
+# ---------------------------------------------------------------------------
+
+def test_prompt_marks_contrarian_signals(alignment_mixed, raw_metrics_partial):
+    """
+    WHY: контрарианский сигнал (Н-01: OVERSOLD → BULLISH) имеет инвертированную
+    полярность. LLM должна знать что 'перепроданность → бычий' — паттерн Mozart,
+    а не ошибка. Маркер [КОНТРАРИАНСКИЙ] обязан присутствовать в промпте рядом
+    с ID сигнала-контрария. alignment_mixed.contrarian_flags = ['Н-01'].
+    """
+    from mozart_llm import generate_alignment_summary
+
+    with patch('mozart_llm.genai.Client') as mock_cls:
+        mock_client = _make_mock_client()
+        mock_cls.return_value = mock_client
+        generate_alignment_summary(alignment_mixed, raw_metrics_partial)
+
+    call_args = mock_client.models.generate_content.call_args
+    prompt = call_args.kwargs.get('contents') or (
+        call_args.args[1] if len(call_args.args) > 1 else str(call_args)
+    )
+
+    # WHY: без маркера LLM интерпретирует Н-01 (RSI OVERSOLD) как медвежий сигнал
+    assert 'КОНТРАРИАНСКИЙ' in prompt, (
+        "Маркер 'КОНТРАРИАНСКИЙ' отсутствует в промпте — "
+        "LLM не получила информацию об инвертированной полярности Н-01"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Тест 9: минимальная содержательная длина (калибровка 2026-05-25)
+# ---------------------------------------------------------------------------
+
+def test_smoke_minimum_content_length(alignment_mixed, raw_metrics_partial):
+    """
+    WHY 200 символов: живой прогон 2026-05-25 показал 5 абзацев (~700+ символов
+    при 17 активных метриках). Порог 200 — нижняя граница содержательного ответа
+    (≈ 1 полный абзац из ~35 слов). Ответ 51–199 символов = обрыв, не анализ.
+    WHY не 700: мок возвращает синтетический текст, не реальный LLM-вывод.
+    Проверка полноты реального вывода — ручная (docs/LLM_QUALITY_CHECKLIST.md).
+    """
+    from mozart_llm import generate_alignment_summary
+
+    long_mock = _MOCK_LLM_TEXT * 3  # гарантированно > 200 символов
+
+    with patch('mozart_llm.genai.Client') as mock_cls:
+        mock_cls.return_value = _make_mock_client(long_mock)
+        result = generate_alignment_summary(alignment_mixed, raw_metrics_partial)
+
+    # WHY 200: меньше = обрыв (1 предложение ≠ анализ 13 активных сигналов Mozart)
+    assert len(result) >= 200, (
+        f"Результат {len(result)} символов — меньше минимального порога "
+        "содержательного анализа (200). Возможен обрыв или пустой промпт."
+    )
