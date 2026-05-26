@@ -400,3 +400,102 @@ def test_smoke_minimum_content_length(alignment_mixed, raw_metrics_partial):
         f"Результат {len(result)} символов — меньше минимального порога "
         "содержательного анализа (200). Возможен обрыв или пустой промпт."
     )
+
+
+# ---------------------------------------------------------------------------
+# Тест 10: ЛЛМ-БАГ-1 — форматирование больших float в промпте
+# ---------------------------------------------------------------------------
+
+def test_prompt_formats_large_floats(alignment_mixed):
+    """
+    WHY: raw_metrics с float 213722897.004 попадает в промпт как сырое число
+    (строка '-213722897.004'), LLM воспроизводит нечитаемо: -213,722,897.00428572.
+    Форматирование до '$213.7 млн' перед передачей в промпт делает вывод LLM
+    читаемым. Тест проверяет call_args (промпт), а не вывод LLM.
+    """
+    from mozart_llm import generate_alignment_summary
+
+    raw_metrics_with_large_float = {
+        'realized_loss_lth_usd': -213_722_897.004,   # >= 1M → '$-213.7 млн'
+        'rsi': 46.06115626812503,                    # < 1000 → '46.06'
+    }
+
+    with patch('mozart_llm.genai.Client') as mock_cls:
+        mock_client = _make_mock_client()
+        mock_cls.return_value = mock_client
+        generate_alignment_summary(alignment_mixed, raw_metrics_with_large_float)
+
+    call_args = mock_client.models.generate_content.call_args
+    prompt = call_args.kwargs.get('contents') or (
+        call_args.args[1] if len(call_args.args) > 1 else str(call_args)
+    )
+
+    # WHY: сырой long-float в промпте = LLM цитирует нечитаемое число в SUMMARY;
+    # _fmt_metric() обязан заменить его на '$-213.7 млн' до передачи LLM
+    assert '213722897' not in prompt, (
+        "Сырой float 213722897 в промпте — _fmt_metric() не применён; "
+        "LLM воспроизводит -213,722,897.00... вместо '$213.7 млн'"
+    )
+    # WHY: '213.7' в промпте = _fmt_metric() применён корректно для значений >=1M
+    assert '213.7' in prompt, (
+        "Форматированное значение '213.7' отсутствует в промпте — "
+        "_fmt_metric() не добавлен в шаг 2 generate_alignment_summary()"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Тест 11: ЛЛМ-БАГ-3 — 'рост затруднён' отсутствует в SIGNAL_CONTEXT['М-11']
+# ---------------------------------------------------------------------------
+
+def test_signal_context_m11_no_causal_phrase():
+    """
+    WHY: 'рост затруднён' в SIGNAL_CONTEXT['М-11'] попадает в промпт LLM
+    и воспроизводится как 'затрудненный рост' — пограничная причинно-следственная
+    формулировка будущего, запрещённая правилами Mozart (чек-лист Ч.1.2).
+    Тест проверяет что фраза убрана из SIGNAL_CONTEXT прежде чем попасть в промпт.
+    """
+    from mozart_llm import SIGNAL_CONTEXT
+
+    m11_ctx = SIGNAL_CONTEXT.get('М-11') or ''
+
+    # WHY: фраза в SIGNAL_CONTEXT → в промпте → LLM воспроизводит как прогнозную;
+    # её отсутствие в словаре = LLM физически не может её галлюцинировать
+    assert 'рост затруднён' not in m11_ctx, (
+        "SIGNAL_CONTEXT['М-11'] содержит 'рост затруднён' — LLM воспроизводит "
+        "как 'затрудненный рост' (пограничный прогноз по чек-листу Ч.1.2). "
+        "Убрать фразу, оставить: 'Устойчивые оттоки = ключевой медвежий сигнал.'"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Тест 12: ЛЛМ-БАГ-2 — промпт содержит инструкцию покрытия КАЖДОГО сигнала
+# ---------------------------------------------------------------------------
+
+def test_prompt_contains_mandatory_coverage_instruction(
+    alignment_mixed, raw_metrics_partial
+):
+    """
+    WHY: М-12 HODL Waves систематически пропускается LLM при ≥13 активных
+    сигналах (живые прогоны 2026-05-25 при 400 и 600 токенах). LLM обрабатывает
+    сигналы по порядку и обрезает хвост при нехватке бюджета.
+    Явная инструкция 'упомяни КАЖДЫЙ активный сигнал' устраняет пропуск.
+    Тест проверяет call_args (промпт), а не недетерминированный вывод LLM.
+    """
+    from mozart_llm import generate_alignment_summary
+
+    with patch('mozart_llm.genai.Client') as mock_cls:
+        mock_client = _make_mock_client()
+        mock_cls.return_value = mock_client
+        generate_alignment_summary(alignment_mixed, raw_metrics_partial)
+
+    call_args = mock_client.models.generate_content.call_args
+    prompt = call_args.kwargs.get('contents') or (
+        call_args.args[1] if len(call_args.args) > 1 else str(call_args)
+    )
+
+    # WHY: без слова 'КАЖДЫЙ' LLM пропускает хвостовые сигналы при сжатии вывода;
+    # явная инструкция обязывает упомянуть каждый ID из АКТИВНЫЕ СИГНАЛЫ
+    assert 'КАЖДЫЙ' in prompt or 'каждый' in prompt, (
+        "Инструкция 'упомяни КАЖДЫЙ активный сигнал' отсутствует в промпте — "
+        "М-12 и другие хвостовые сигналы пропускаются при ограниченном бюджете LLM"
+    )
