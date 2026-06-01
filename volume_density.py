@@ -2908,6 +2908,58 @@ DAYS<1.0   : {_below_str}  (proxy_sopr < 1.0 подряд с последнег�
 {'='*66}"""    )
 
     # ------------------------------------------------------------------
+    # НВ-02 | PPI → CPI — макро-фильтр (FRED)
+    # ------------------------------------------------------------------
+    # WHY отдельный try: FRED API может быть недоступен или ключ не установлен;
+    # ошибка не должна прерывать НВ-03 и последующие блоки.
+    # WHY макро-фильтр вне alignment: НВ-02 — информационный контекст, не Mozart-сигнал.
+    # (Mozart, пост 13.05.2026: PPI опережает CPI на 1–3 месяца)
+    # ------------------------------------------------------------------
+    try:
+        from macro_client import MacroClient, classify_ppi_regime
+        _macro_client  = MacroClient()           # берёт FRED_API_KEY из env
+        _ppi_series    = _macro_client.get_ppi_series(months=7)   # 7 → 3 изменения + запас
+        _cpi_series    = _macro_client.get_cpi_series(months=2)   # текущий + предыдущий
+        _ppi_regime    = classify_ppi_regime(_ppi_series)
+
+        # Значения для вывода
+        _ppi_last      = _ppi_series.iloc[-1]
+        _ppi_prev      = _ppi_series.iloc[-2]
+        _ppi_m3_change = _ppi_series.iloc[-1] - _ppi_series.iloc[-4]  # 3-мес. изменение
+        _ppi_last_date = _ppi_series.index[-1].strftime('%b %Y')
+        _cpi_last      = _cpi_series.iloc[-1]
+        _cpi_prev      = _cpi_series.iloc[-2]
+        _cpi_mom       = _cpi_last - _cpi_prev                        # month-over-month
+        _cpi_last_date = _cpi_series.index[-1].strftime('%b %Y')
+
+        _ppi_regime_desc = {
+            'RISING' : 'PPI растёт 3 мес подряд — опережающий сигнал роста CPI через 1–3 мес (Mozart 13.05.2026)',
+            'FALLING': 'PPI снижается 3 мес подряд — опережающий сигнал замедления CPI',
+            'FLAT'   : 'PPI без устойчивого тренда (изменение < 0.5 п.п. суммарно за 3 мес)',
+            'MIXED'  : 'PPI разнонаправлен — устойчивого тренда нет',
+        }
+
+        print(f"""
+[НВ-02 | PPI → CPI — макро-фильтр]
+{'-'*66}
+PPI ({_ppi_last_date}) : {_ppi_last:.1f}  |  Тренд 3 мес: {_ppi_m3_change:+.2f} п.п.  |  Режим: {_ppi_regime}
+CPI ({_cpi_last_date}) : {_cpi_last:.1f}  |  MoM: {_cpi_mom:+.2f} п.п.
+
+Что измеряет блок: PPI (Producer Price Index, PPIACO) — индекс цен производителей.
+Опережает рост CPI (Consumer Price Index, CPIAUCSL) на 1–3 месяца.
+Режим RISING при месячном PPI > 1% — Mozart: устойчивая инфляция,
+ФРС удерживает ставку, ликвидность ограничена (пост 13.05.2026).
+
+  RISING  : {_ppi_regime_desc['RISING']}
+  FALLING : {_ppi_regime_desc['FALLING']}
+  FLAT    : {_ppi_regime_desc['FLAT']}
+  MIXED   : {_ppi_regime_desc['MIXED']}
+→ Текущий режим: {_ppi_regime} — {_ppi_regime_desc[_ppi_regime]}
+{'-'*66}""")
+    except Exception as _nv02_e:
+        print(f"\n[НВ-02 | PPI → CPI — макро-фильтр]\n{'-'*66}\nНедоступен: {_nv02_e}")
+
+    # ------------------------------------------------------------------
     # НВ-03 | BTC Dominance — ротация ликвидности (CoinGecko)
     # ------------------------------------------------------------------
     # WHY отдельный try: CoinGecko может быть недоступен; ошибка не должна
