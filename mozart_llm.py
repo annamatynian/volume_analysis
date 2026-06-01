@@ -136,27 +136,40 @@ SIGNAL_CONTEXT: dict[str, Optional[str]] = {
 # _fmt_metric() — форматирование float для промпта LLM
 # ---------------------------------------------------------------------------
 
-def _fmt_metric(v: float) -> str:
+def _fmt_metric(v: float, is_usd: bool = False) -> str:
     """Форматирует числовое значение метрики перед передачей в промпт LLM.
 
     WHY: без форматирования LLM получает '-213722897.004' и воспроизводит
-    '-213,722,897.00428572' в выводе. Читаемый формат ('$213.7 млн') устраняет
-    нечитаемость и помогает LLM точно цитировать значение.
+    '-213,722,897.00428572' в выводе. Читаемый формат устраняет нечитаемость.
 
-    Диапазоны:
-        >= 1 млрд  → '$X.XX млрд'
-        >= 1 млн   → '$X.X млн'
-        >= 1 тыс   → 'X,XXX.X'  (запятые-разделители тысяч)
-        < 1 тыс    → 'X.XX'
+    Args:
+        v:       числовое значение метрики.
+        is_usd:  True  -> префикс '$' (для USD-метрик, ключи с суффиксом '_usd').
+                 False -> без '$' (для BTC, ratio, z-score и других не-USD).
+                 WHY: ранее _fmt_metric добавляла '$' ко всем значениям >= 1M;
+                 BTC-метрики (Net Pos 30d) получали '$1.0 млн' — LLM цитировала
+                 как доллары вместо биткоинов (баг обнаружен прогоном 2026-05-26).
+
+    Диапазоны (is_usd=True):  '$X.XX млрд' / '$X.X млн' / '$X,XXX.X' / '$X.XX'
+    Диапазоны (is_usd=False): 'X.XX млрд'  / 'X.X млн'  / 'X,XXX.X'  / 'X.XX'
     """
     abs_v = abs(v)
-    if abs_v >= 1_000_000_000:
-        return f"${v / 1_000_000_000:.2f} млрд"
-    if abs_v >= 1_000_000:
-        return f"${v / 1_000_000:.1f} млн"
-    if abs_v >= 1_000:
-        return f"{v:,.1f}"
-    return f"{v:.2f}"
+    if is_usd:
+        if abs_v >= 1_000_000_000:
+            return "${:.2f} млрд".format(v / 1_000_000_000)
+        if abs_v >= 1_000_000:
+            return "${:.1f} млн".format(v / 1_000_000)
+        if abs_v >= 1_000:
+            return "${:,.1f}".format(v)
+        return "${:.2f}".format(v)
+    else:
+        if abs_v >= 1_000_000_000:
+            return "{:.2f} млрд".format(v / 1_000_000_000)
+        if abs_v >= 1_000_000:
+            return "{:.1f} млн".format(v / 1_000_000)
+        if abs_v >= 1_000:
+            return "{:,.1f}".format(v)
+        return "{:.2f}".format(v)
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +179,7 @@ def _fmt_metric(v: float) -> str:
 def generate_alignment_summary(
     alignment: AlignmentResult,
     raw_metrics: dict[str, Optional[float]],
-    max_tokens: int = 600,
+    max_tokens: int = 900,
 ) -> str:
     """
     Генерирует 3–5 предложений описания текущего состояния рынка
@@ -176,13 +189,13 @@ def generate_alignment_summary(
         alignment:   AlignmentResult из mozart_alignment.build_alignment().
         raw_metrics: Словарь числовых значений метрик.
                      Значения None → фильтруются, не попадают в промпт.
-        max_tokens:  Максимум видимых токенов вывода (default: 600).
-                     WHY 600 + thinking_budget=0: при thinking_budget=0 весь
-                     бюджет идёт на вывод (CoT для фактографического резюме не нужен).
-                     WHY 600 (не 400): оценка качества 2026-05-25 выявила что
-                     при 400 токенах LLM пропускает М-12 HODL Waves и сжимает
-                     исторические якоря М-10. 600 даёт место для всех активных
-                     сигналов (подтверждено прогоном 2026-05-25: 5 абзацев, точка).
+        max_tokens:  Максимум видимых токенов вывода (default: 900).
+                     WHY 900 (не 600): при 13 активных сигналах × ~50 токенов
+                     = 650 минимум; 600 доказанно обрезает М-12 и Н-02
+                     (прогоны 2026-05-25, 2026-05-26). 900 даёт запас.
+                     WHY thinking_budget=0: Gemini 2.5 Flash без явного 0
+                     тратит thinking-токены из бюджета max_output_tokens,
+                     сокращая реальный вывод до 26 слов.
 
     Returns:
         str: 3–5 предложений на русском языке.
@@ -197,7 +210,14 @@ def generate_alignment_summary(
         Smoke: str, len > 50, нет 'None', нет слов-рекомендаций, 1 вызов API.
     """
     # --- Шаг 1: контекст только из активных сигналов ---
-    active_ids = alignment.bullish + alignment.bearish + alignment.neutral
+    # WHY ротация bearish: М-12 систематически пропускался при 4 медвежьих сигналах
+    # (прогоны 2026-05-25, 2026-05-26): LLM обрабатывает сигналы по порядку
+    # и сбрасывает последний. Решение: ставим М-12 первым в bearish-группе.
+    _bearish = (
+        [s for s in alignment.bearish if s == 'М-12']
+        + [s for s in alignment.bearish if s != 'М-12']
+    )
+    active_ids = alignment.bullish + _bearish + alignment.neutral
     context_lines: list[str] = []
 
     for sid in active_ids:
@@ -223,8 +243,10 @@ def generate_alignment_summary(
     )
 
     # --- Шаг 2: числовые метрики — только не-None, форматируем через _fmt_metric ---
+    # WHY is_usd='_usd' in k: BTC-метрики (Net Pos 30d) не должны получать '$';
+    # знак доллара применяется только к ключам с суффиксом '_usd'.
     metrics_lines = [
-        f"  {k}: {_fmt_metric(v)}"
+        f"  {k}: {_fmt_metric(v, is_usd='_usd' in k)}"
         for k, v in raw_metrics.items()
         if v is not None
     ]

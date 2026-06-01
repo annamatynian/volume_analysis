@@ -499,3 +499,82 @@ def test_prompt_contains_mandatory_coverage_instruction(
         "Инструкция 'упомяни КАЖДЫЙ активный сигнал' отсутствует в промпте — "
         "М-12 и другие хвостовые сигналы пропускаются при ограниченном бюджете LLM"
     )
+
+
+# ---------------------------------------------------------------------------
+# Тест 13: max_output_tokens >= 900 (фикс ЛЛМ-БАГ-2: обрыв хвоста)
+# ---------------------------------------------------------------------------
+
+def test_api_called_with_sufficient_token_budget(alignment_mixed, raw_metrics_partial):
+    """
+    WHY: при 600 токенах LLM физически не вмещает 13 активных сигналов (~50
+    токенов на сигнал). М-12 и Н-02 обрезаются последними. Минимальный бюджет
+    для полного покрытия 13 сигналов — 900 токенов.
+    Тест защищает контракт: generate_content() вызывается с max_output_tokens >= 900.
+    Проверяется через call_args, а не вывод LLM.
+    """
+    from mozart_llm import generate_alignment_summary
+
+    with patch('mozart_llm.genai.Client') as mock_cls:
+        mock_client = _make_mock_client()
+        mock_cls.return_value = mock_client
+        generate_alignment_summary(alignment_mixed, raw_metrics_partial)
+
+    call_args = mock_client.models.generate_content.call_args
+    # config передаётся как keyword arg 'config'
+    config = call_args.kwargs.get('config')
+    actual_tokens = getattr(config, 'max_output_tokens', None)
+
+    # WHY >= 900: при 13 сигналах × ~50 токенов = 650 минимум + заголовки;
+    # 600 токенов доказанно обрезает М-12 и Н-02 (прогоны 2026-05-25, 2026-05-26)
+    assert actual_tokens is not None and actual_tokens >= 900, (
+        f"max_output_tokens={actual_tokens} — меньше 900; "
+        "при 13 активных сигналах хвостовые (М-12, Н-02) обрезаются"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Тест 14: _fmt_metric не добавляет $ к BTC-метрикам (фикс нового бага)
+# ---------------------------------------------------------------------------
+
+def test_prompt_no_dollar_sign_on_btc_metrics(alignment_mixed):
+    """
+    WHY: _fmt_metric() применяла $ ко всем значениям >= 1M.
+    BTC-метрики (lth_net_position_30d, sth_net_position_30d) — не USD.
+    LLM получала '$1.0 млн' и воспроизводила как доллары, хотя это биткоины.
+    Фикс: $ применяется только к ключам с суффиксом '_usd'.
+    Тест проверяет call_args (промпт), а не вывод LLM.
+    """
+    from mozart_llm import generate_alignment_summary
+
+    raw_btc_metrics = {
+        'lth_net_position_30d': 1_029_914.0,   # BTC, '_usd' нет в ключе → без $
+        'sth_net_position_30d': -1_012_192.0,  # BTC, '_usd' нет в ключе → без $
+        'realized_loss_lth_usd': -191_000_000.0,  # USD → с $
+    }
+
+    with patch('mozart_llm.genai.Client') as mock_cls:
+        mock_client = _make_mock_client()
+        mock_cls.return_value = mock_client
+        generate_alignment_summary(alignment_mixed, raw_btc_metrics)
+
+    call_args = mock_client.models.generate_content.call_args
+    prompt = call_args.kwargs.get('contents') or (
+        call_args.args[1] if len(call_args.args) > 1 else str(call_args)
+    )
+
+    # WHY: '$1.0 млн' при BTC-ключе = LLM цитирует доллары вместо биткоинов;
+    # lth_net_position_30d не имеет '_usd' → _fmt_metric(is_usd=False) → без $
+    assert '$1.0' not in prompt, (
+        "BTC-метрика lth_net_position_30d отформатирована как '$1.0 млн' — "
+        "_fmt_metric применяет $ к non-USD ключу; добавить is_usd='_usd' in k"
+    )
+    assert '$-1.0' not in prompt, (
+        "BTC-метрика sth_net_position_30d отформатирована как '$-1.0 млн' — "
+        "_fmt_metric применяет $ к non-USD ключу"
+    )
+    # WHY: USD-ключ realized_loss_lth_usd ДОЛЖЕН получить $
+    assert '$-191.0' in prompt, (
+        "USD-метрика realized_loss_lth_usd не получила $ — "
+        "_fmt_metric(is_usd=True) не применён для '_usd'-ключей"
+    )
