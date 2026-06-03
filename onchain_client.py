@@ -644,3 +644,46 @@ class BGeometricsClient:
             end_date,
         )
 
+    async def get_funding_rate_series(
+        self,
+        records: int = 90,
+    ):
+        """
+        М-15 | Funding Rate 8h серия для расчёта 30d MA.
+
+        Endpoint: /v1/funding-rate
+        Поле: fundingRate (строка, доли; 0.0001 = базовая ставка Binance).
+        Интервал: 8 часов (3 записи/день).
+
+        WHY не через _fetch_timeseries:
+          Диагностика 2026-06-02: параметр days игнорируется API —
+          всегда возвращается вся история (3178 записей с 2023-07-09).
+          Берём хвост (тайл последних `records` записей) без повторных запросов.
+
+        Args:
+            records: Количество 8-часовых записей для возврата.
+                     30 дней × 3 записи/день = 90 (дефолт).
+                     35 дней = 105 записей (если нужен запас).
+
+        Returns:
+            DataFrame [date, funding_rate]
+              date         — datetime64, 8-часовые интервалы.
+              funding_rate — float, доли (0.0001 = базовая ставка Binance).
+        """
+        url = f"{self.BASE_URL}/funding-rate"
+        resp = self.session.get(url, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+
+        if not data:  # pragma: no cover
+            return pd.DataFrame(columns=['date', 'funding_rate'])
+
+        df = pd.DataFrame(data)
+        df = df.rename(columns={'d': 'date'})
+        df['date'] = pd.to_datetime(df['date'])
+        df['funding_rate'] = df['fundingRate'].astype(float)
+        df = df[['date', 'funding_rate']].sort_values('date').reset_index(drop=True)
+
+        # WHY tail: API игнорирует параметр days; берём хвост без повторного запроса.
+        return df.tail(records).reset_index(drop=True)
+

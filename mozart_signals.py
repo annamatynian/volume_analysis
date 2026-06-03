@@ -1104,3 +1104,182 @@ def classify_btc_dominance_trend(btc_d_current: float, btc_d_30d_ago: float) -> 
         return "ROTATION_BTC"
     return "NEUTRAL"
 
+
+# ---------------------------------------------------------------------------
+# НВ-01 | Регрессия убывающих пиков (пост 31.03.2026)
+# ---------------------------------------------------------------------------
+
+def find_swing_highs(
+    highs: list,
+    dates: list,
+    n: int,
+) -> list:
+    """
+    Находит подтверждённые локальные максимумы в ряду highs.
+
+    Пик i подтверждён если:
+      highs[i] > max(highs[i-n : i])       -- строго выше левого окна
+      highs[i] >= max(highs[i+1 : i+n+1])  -- не ниже правого окна
+
+    Асимметричное сравнение (Gemini validation 2026-06-01):
+      слево > -- предотвращает дублирование при плоском левом плече.
+      справа >= -- детектирует пик при плоском правом плече (двойная вершина).
+
+    WHY highs, не closes:
+      Mozart называет 87k/84k/76k -- это high свечи, не close.
+
+    Returns:
+        list of (index: int, price: float, date)
+    """
+    peaks = []
+    length = len(highs)
+    for i in range(n, length - n):
+        val = highs[i]
+        left  = highs[i - n : i]
+        right = highs[i + 1 : i + n + 1]
+        # WHY > слева, >= справа: предотвращает дубликацию при двойной вершине.
+        if left and right:
+            if val > max(left) and val >= max(right):
+                peaks.append((i, float(val), dates[i]))
+    return peaks
+
+
+def classify_descending_peaks(
+    highs: list,
+    dates: list,
+) -> dict:
+    """
+    Классифицирует режим убывающих пиков (Mozart, пост 31.03.2026).
+
+    Алгоритм:
+      1. find_swing_highs
+      2. Фильтр по max_days_between_peaks
+      3. Последние K пиков
+      4. < 3 пиков -> INSUFFICIENT_DATA
+      5. Монотонность: all(Y[i] < Y[i-1])
+      6. linregress(X, Y): slope, stderr
+      7. FLAT если |slope| < 2*stderr, иначе DESCENDING/ASCENDING
+
+    WHY монотонность вместо R2:
+      R2 на 3-5 точках нестабилен. Gemini validation 2026-06-01.
+
+    Returns:
+        dict: regime, peaks_count, slope, projected_next, is_monotone
+    """
+    from scipy.stats import linregress
+
+    n    = int(MOZART_CONFIG["swing_high_window"])
+    k    = int(MOZART_CONFIG["swing_high_lookback_peaks"])
+    mdbp = int(MOZART_CONFIG["max_days_between_peaks"])
+
+    _insufficient: dict = {
+        'regime': 'INSUFFICIENT_DATA',
+        'peaks_count': 0,
+        'slope': None,
+        'projected_next': None,
+        'is_monotone': None,
+    }
+
+    all_peaks = find_swing_highs(highs, dates, n)
+    if not all_peaks:
+        return _insufficient
+
+    # Фильтр по интервалу между соседними пиками
+    # WHY: пики с большим интервалом -- разные рыночные эпохи.
+    def _days_between(p1, p2) -> int:
+        d1, d2 = p1[2], p2[2]
+        if hasattr(d1, 'date'):
+            d1 = d1.date()
+        if hasattr(d2, 'date'):
+            d2 = d2.date()
+        return abs((d2 - d1).days)
+
+    filtered: list = [all_peaks[0]]
+    for i in range(1, len(all_peaks)):
+        if _days_between(all_peaks[i - 1], all_peaks[i]) <= mdbp:
+            filtered.append(all_peaks[i])
+        else:
+            # Интервал превышен: сброс цепочки, стартуем новую
+            filtered = [all_peaks[i]]
+
+    peaks = filtered[-k:]
+
+    if len(peaks) < 3:
+        result = _insufficient.copy()
+        result['peaks_count'] = len(peaks)
+        return result
+
+    Y = [p[1] for p in peaks]
+    X = list(range(len(Y)))
+
+    # Монотонность: каждый следующий < предыдущего
+    is_monotone = all(Y[i] < Y[i - 1] for i in range(1, len(Y)))
+
+    reg = linregress(X, Y)
+    slope     = float(reg.slope)
+    stderr    = float(reg.stderr)
+    intercept = float(reg.intercept)
+    projected_next = float(intercept + slope * len(Y))
+
+    # Классификация по рекомендации Gemini (validation 2026-06-01):
+    # знак slope -- главный признак, FLAT -- только когда slope близок к нулю.
+    # WHY: stderr взрывается от немонотонности -- высокая волатильность
+    # маскируется под флэт, если сравнивать |slope| с 2*stderr.
+    price_scale = float(np.mean(Y)) if float(np.mean(Y)) != 0.0 else 1.0
+
+    # Уровень 1: микро-флэт -- slope практически ноль относительно масштаба цены
+    # WHY 0.001: движение < 0.1% от средней цены за шаг -- математический ноль.
+    if abs(slope) / price_scale < 0.001:
+        regime = 'FLAT'
+    elif slope < 0 and is_monotone:
+        # Уровень 2: строгий нисходящий тренд -- регрессия вниз + монотонность
+        regime = 'DESCENDING_STRONG'
+    elif slope < 0:
+        # Уровень 3: общий вектор вниз, но есть нарушения
+        # WHY 0.5*stderr: тотальный хаос -- slope < половины ошибки
+        # (Gemini: в этом случае slope не имеет смысла как метрика)
+        if stderr > 0 and abs(slope) < 0.5 * stderr:
+            regime = 'FLAT'
+        else:
+            regime = 'DESCENDING_WEAK'
+    else:
+        regime = 'ASCENDING'
+
+    return {
+        'regime'        : regime,
+        'peaks_count'   : len(peaks),
+        'slope'         : slope,
+        'projected_next': projected_next,
+        'is_monotone'   : is_monotone,
+    }
+
+
+def classify_funding_rate_ma_regime(ma_value: float) -> str:
+    """
+    М-15 | Режим 30-дневной MA funding rate.
+
+    Mozart (пост 11.03.2026):
+      «30-дневная MA funding rate на многолетнем минимуме = предшествует дну цикла»
+
+    Args:
+        ma_value: Среднее значение funding rate за 30 дней (в долях).
+                  API возвращает значения ~0.0001 (базовая ставка Binance = +0.0001).
+                  8-часовой интервал: 30d × 3 записи/день = 90 записей для расчёта.
+
+    Returns:
+        'FLOOR_ZONE'  -- ma_value <= funding_rate_ma_floor:
+                         Mozart-паттерн активен (многолетний минимум).
+        'NEUTRAL'     -- ma_value > funding_rate_ma_floor:
+                         Обычный диапазон.
+
+    WHY включительная граница (порог включается в FLOOR_ZONE):
+        ma_value == floor — рынок уже достиг порога; паттерн подтверждён.
+        Аналогично lth_sopr_rubicon (PLAN_MOZART_PATTERNS.md).
+    """
+    from mozart_config import MOZART_CONFIG
+    floor = MOZART_CONFIG["funding_rate_ma_floor"]
+
+    if ma_value <= floor:
+        return 'FLOOR_ZONE'
+    return 'NEUTRAL'
+

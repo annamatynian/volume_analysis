@@ -1976,6 +1976,25 @@ Retest Score: {_retest['score']:.3f}  —  {_rt_summary}
     _funding_current_desc = _funding_regime_descriptions.get(_funding_regime, 'нет описания')
     _funding_val_str      = f'{_funding_pct_raw:+.4f}%' if _funding_pct_raw is not None else 'н/д'
 
+    # М-15 | Funding Rate 30d MA
+    # WHY после _funding_regime: onchain_client уже инициализирован, funding-rate не требует
+    # отдельного API-запроса в оркестраторе (данные есть в параметре exchange).
+    # WHY через onchain_client: данные BGeometrics (8h интервал) с 2023-07-09.
+    _fr_ma_regime = 'NEUTRAL'
+    _fr_ma_value  = float('nan')
+    _fr_records   = MOZART_CONFIG['funding_rate_ma_window_days'] * 3  # 30d × 3 записи/день = 90
+    try:
+        from mozart_signals import classify_funding_rate_ma_regime as _cls_m15
+        _fr_df        = await onchain_client.get_funding_rate_series(records=_fr_records)
+        if not _fr_df.empty and 'funding_rate' in _fr_df.columns:
+            _fr_ma_value  = float(_fr_df['funding_rate'].mean())
+            _fr_ma_regime = _cls_m15(_fr_ma_value)
+    except Exception as _m15_e:
+        print(f'[WARN] М-15 funding rate MA: {_m15_e}')
+
+    _fr_ma_str = f'{_fr_ma_value:+.6f}' if not pd.isna(_fr_ma_value) else 'н/д'
+    _fr_ma_pct = f'{_fr_ma_value * 100:+.4f}%' if not pd.isna(_fr_ma_value) else 'н/д'
+
     print(f"""
 [FUNDING RATE REGIME]
 {'-'*66}
@@ -1998,7 +2017,13 @@ Retest Score: {_retest['score']:.3f}  —  {_rt_summary}
 Basis Spread (spot vs futures): {(_basis['regime'] + f" ({_basis['basis_usd']:+,.0f} USD / {_basis['basis_pct']:+.3f}%)") if _basis else 'н/д'}
   CONTANGO      : futures > spot — рынок ждёт роста (бычий сигнал).
   BACKWARDATION : futures < spot — давление продавцов (медвежий сигнал).
-  FLAT          : спред в пределах базовой ставки (±0.1%) — нейтрально."""
+  FLAT          : спред в пределах базовой ставки (±0.1%) — нейтрально.
+
+М-15 | Funding Rate 30d MA:
+  MA ({_fr_records} записей / 8h) : {_fr_ma_str}  ({_fr_ma_pct})
+  Режим  : {_fr_ma_regime}
+  FLOOR_ZONE : MA ≤ {MOZART_CONFIG['funding_rate_ma_floor']:+.4f} — Mozart-паттерн активен (пост 11.03.2026).
+  NEUTRAL    : MA > {MOZART_CONFIG['funding_rate_ma_floor']:+.4f} — обычный диапазон."""
     )
 
     # ------------------------------------------------------------------
@@ -2906,6 +2931,49 @@ DAYS<1.0   : {_below_str}  (proxy_sopr < 1.0 подряд с последнег�
     Информационные теги (не влиют на метку):
 {_fmt_tags(_info_tags)}
 {'='*66}"""    )
+
+    # ------------------------------------------------------------------
+    # НВ-02 | PPI → CPI — макро-фильтр (FRED)
+    # ------------------------------------------------------------------
+    # WHY отдельный try: FRED API может быть недоступен или ключ не установлен;
+    # ошибка не должна прерывать НВ-03 и последующие блоки.
+    # WHY макро-фильтр вне alignment: НВ-02 — информационный контекст, не Mozart-сигнал.
+    # (Mozart, пост 13.05.2026: PPI опережает CPI на 1–3 месяца)
+    # ------------------------------------------------------------------
+    try:
+        from mozart_signals import classify_descending_peaks as _cls_nv01
+        _nv01 = _cls_nv01(df['high'].tolist(), df['date'].tolist())
+        _nv01_regime   = _nv01['regime']
+        _nv01_peaks    = _nv01['peaks_count']
+        _nv01_slope    = _nv01['slope']
+        _nv01_proj     = _nv01['projected_next']
+        _nv01_monotone = _nv01['is_monotone']
+
+        _nv01_desc = {
+            'DESCENDING_STRONG': 'пики монотонно убывают — Mozart-паттерн подтверждён',
+            'DESCENDING_WEAK'  : 'общий вектор вниз, но есть нарушения монотонности',
+            'FLAT'             : 'slope статистически не отличим от нуля',
+            'ASCENDING'        : 'пики возрастают',
+            'INSUFFICIENT_DATA': 'менее 3 подтверждённых пиков в окне анализа',
+        }
+
+        _proj_str  = f"${_nv01_proj:,.0f}" if _nv01_proj is not None else 'н/д'
+        _slope_str = f"{_nv01_slope:+.0f}" if _nv01_slope is not None else 'н/д'
+
+        print(f"""
+[НВ-01 | РЕГРЕССИЯ УБЫВАЮЩИХ ПИКОВ]
+{'-'*66}
+Режим       : {_nv01_regime} — {_nv01_desc.get(_nv01_regime, '')}
+Пиков       : {_nv01_peaks}  |  Slope: {_slope_str}  |  Монотонно: {_nv01_monotone}
+Проекция    : {_proj_str}  (следующий пик по регрессии, уровень цены)
+
+Что измеряет блок: swing high по high свечи (окно {MOZART_CONFIG['swing_high_window']} дней).
+Паттерн Mozart (пост 31.03.2026): 87k→84k→76k — серия убывающих локальных максимумов.
+DESCENDING_STRONG = монотонное убывание + slope < 0 (Mozart-паттерн активен).
+Проекция — следующая точка на регрессионной прямой (уровень, не дата).
+{'-'*66}""")
+    except Exception as _nv01_e:
+        print(f"\n[НВ-01 | РЕГРЕССИЯ УБЫВАЮЩИХ ПИКОВ]\n{'-'*66}\nНедоступен: {_nv01_e}")
 
     # ------------------------------------------------------------------
     # НВ-02 | PPI → CPI — макро-фильтр (FRED)
