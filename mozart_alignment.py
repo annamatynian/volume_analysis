@@ -124,6 +124,27 @@ _POLARITY_TABLE: dict[str, dict[str, str]] = {
         "FLOOR_ZONE": "BULLISH",
         "NEUTRAL":    "NEUTRAL",
     },
+    # --- НВ-01 | Регрессия убывающих пиков ---
+    # DESCENDING_STRONG/WEAK → BEARISH: нисходящий тренд swing highs.
+    # Mozart (31.03.2026): 87k→84k→76k — паттерн активен.
+    # ASCENDING → NEUTRAL: роста пиков нет в Mozart-паттернах (не BULLISH).
+    'НВ-01': {
+        'DESCENDING_STRONG': 'BEARISH',
+        'DESCENDING_WEAK':   'BEARISH',
+        'FLAT':              'NEUTRAL',
+        'ASCENDING':         'NEUTRAL',
+        'INSUFFICIENT_DATA': 'NEUTRAL',
+    },
+    # --- НВ-02 | PPI → CPI макро-фильтр ---
+    # FALLING → BULLISH: замедление PPI → ожидается снижение CPI → ФРС смягчает.
+    # RISING → BEARISH: рост PPI → рост CPI → ФРС удерживает ставку.
+    # Mozart (13.05.2026): PPI опережает CPI на 1-3 месяца.
+    'НВ-02': {
+        'RISING':  'BEARISH',
+        'FALLING': 'BULLISH',
+        'FLAT':    'NEUTRAL',
+        'MIXED':   'NEUTRAL',
+    },
     # --- НВ-03 | BTC Dominance — ротация ликвидности ---
     # Источник: пост 10.05.2026 (НВ-03, PLAN_MOZART_PATTERNS.md ЧАСТЬ 4)
     # API: CoinGecko /api/v3/global → поле btc_dominance (%)

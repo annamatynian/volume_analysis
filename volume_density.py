@@ -3158,6 +3158,12 @@ BTC.D (текущее) : {_nv03_cur_s}
                          if '_fr_ma_regime' in dir() and '_fr_ma_value' in dir()
                          and not pd.isna(_fr_ma_value)
                          else None),
+            'НВ-01'   : (_nv01_label
+                         if '_nv01_label' in dir() and _nv01_label is not None
+                         else None),
+            'НВ-02'   : (_nv02_label
+                         if '_nv02_label' in dir() and _nv02_label is not None
+                         else None),
             'НВ-03'   : _nv03_label,   # None → missing если истории < 30 дней
         }
 

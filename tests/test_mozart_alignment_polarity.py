@@ -538,3 +538,81 @@ class TestM15FundingRateMA:
         # обновления _POLARITY_TABLE — ValueError принудит разработчика
         # заметить рассинхрон вместо тихого дефолта.
 
+
+# ===========================================================================
+# НВ-01 | Регрессия убывающих пиков
+# ===========================================================================
+
+class TestNV01DescendingPeaks:
+    """Контракт НВ-01: DESCENDING_STRONG/WEAK -> BEARISH, остальное -> NEUTRAL."""
+
+    def test_descending_strong_is_bearish(self):
+        result = signal_polarity('НВ-01', 'DESCENDING_STRONG')
+        assert result == 'BEARISH'
+        # WHY: активный нисходящий тренд swing highs - структурный медвежий паттерн;
+        # BULLISH/NEUTRAL здесь = alignment пропустит сигнал без счёта.
+
+    def test_descending_weak_is_bearish(self):
+        result = signal_polarity('НВ-01', 'DESCENDING_WEAK')
+        assert result == 'BEARISH'
+        # WHY: общий вектор вниз без монотонности - граница между BEARISH и NEUTRAL;
+        # NEUTRAL здесь = alignment не досчитает -1 в score при активном медвежьем сценарии.
+
+    def test_flat_is_neutral(self):
+        result = signal_polarity('НВ-01', 'FLAT')
+        assert result == 'NEUTRAL'
+        # WHY: slope ~= 0 - нет направленного сигнала; BEARISH здесь = ложный -1 в score.
+
+    def test_ascending_is_neutral(self):
+        result = signal_polarity('НВ-01', 'ASCENDING')
+        assert result == 'NEUTRAL'
+        # WHY: Mozart не интерпретирует рост пиков как BULLISH (нет паттерна);
+        # BULLISH здесь = ложный +1 в score alignment.
+
+    def test_insufficient_data_is_neutral(self):
+        result = signal_polarity('НВ-01', 'INSUFFICIENT_DATA')
+        assert result == 'NEUTRAL'
+        # WHY: < 3 пиков в окне - нет данных для суждения;
+        # должен попасть в neutral, не в missing (label != None).
+
+    def test_unknown_label_raises(self):
+        with pytest.raises(ValueError):
+            signal_polarity('НВ-01', 'НЕСУЩЕСТВУЮЩАЯ_ЗОНА')
+        # WHY: рассинхрон classify/polarity -> ValueError принудит разработчика
+        # заметить проблему, а не получить тихий NEUTRAL.
+
+
+# ===========================================================================
+# НВ-02 | PPI -> CPI макро-фильтр
+# ===========================================================================
+
+class TestNV02PPIRegime:
+    """Контракт НВ-02: RISING -> BEARISH, FALLING -> BULLISH, FLAT/MIXED -> NEUTRAL."""
+
+    def test_rising_is_bearish(self):
+        result = signal_polarity('НВ-02', 'RISING')
+        assert result == 'BEARISH'
+        # WHY: RISING PPI -> рост CPI -> ФРС удерживает ставку -> ликвидность ограничена.
+        # Mozart (13.05.2026): макро-давление на риск-активы.
+
+    def test_falling_is_bullish(self):
+        result = signal_polarity('НВ-02', 'FALLING')
+        assert result == 'BULLISH'
+        # WHY: FALLING PPI -> ожидается замедление CPI -> ФРС смягчает политику;
+        # NEUTRAL/BEARISH здесь = alignment не досчитает +1 в score при ключевом бычьем макро-сигнале.
+
+    def test_flat_is_neutral(self):
+        result = signal_polarity('НВ-02', 'FLAT')
+        assert result == 'NEUTRAL'
+        # WHY: нет устойчивого тренда - нет сигнала для alignment.
+
+    def test_mixed_is_neutral(self):
+        result = signal_polarity('НВ-02', 'MIXED')
+        assert result == 'NEUTRAL'
+        # WHY: чередование роста/падения - нет сигнала Mozart.
+
+    def test_unknown_label_raises(self):
+        with pytest.raises(ValueError):
+            signal_polarity('НВ-02', 'НЕСУЩЕСТВУЮЩАЯ_ЗОНА')
+        # WHY: рассинхрон classify/polarity -> ValueError вместо тихого NEUTRAL.
+
