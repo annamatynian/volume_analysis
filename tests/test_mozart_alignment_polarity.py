@@ -507,3 +507,34 @@ class TestNV03BtcDominanceTrend:
         # обновления таблицы — ValueError принудит разработчика
         # заметить рассинхрон, а не получить тихий NEUTRAL.
 
+
+# ===========================================================================
+# М-15 | Funding Rate 30d MA
+# ===========================================================================
+
+class TestM15FundingRateMA:
+    """Контракт М-15: classify_funding_rate_ma_regime → FLOOR_ZONE / NEUTRAL."""
+
+    def test_floor_zone_is_bullish(self):
+        result = signal_polarity("М-15", "FLOOR_ZONE")
+        assert result == "BULLISH", (
+            # WHY: FLOOR_ZONE = 30d MA ≤ -0.005 — многолетний минимум фандинга,
+            # рынок платит лонгам. Mozart (11.03.2026): исторически предшествует
+            # дну цикла. NEUTRAL/BEARISH здесь = alignment пропустит опережающий
+            # бычий сигнал в счёте build_alignment().
+        )
+
+    def test_neutral_is_neutral(self):
+        result = signal_polarity("М-15", "NEUTRAL")
+        assert result == "NEUTRAL", (
+            # WHY: обычный диапазон фандинга — нет направленного сигнала;
+            # BULLISH/BEARISH здесь = ложный ±1 в score при отсутствии экстремума.
+        )
+
+    def test_unknown_label_raises(self):
+        with pytest.raises(ValueError):
+            signal_polarity("М-15", "НЕСУЩЕСТВУЮЩАЯ_ЗОНА")
+        # WHY: если classify_funding_rate_ma_regime добавит новую зону без
+        # обновления _POLARITY_TABLE — ValueError принудит разработчика
+        # заметить рассинхрон вместо тихого дефолта.
+

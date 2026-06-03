@@ -3154,6 +3154,10 @@ BTC.D (текущее) : {_nv03_cur_s}
             'МБ-03'   : None,   # get_sth_profit() не реализован → missing
             'Н-01'    : _sa_rsi_label,
             'Н-02'    : _sa_h02,
+            'М-15'    : (_fr_ma_regime
+                         if '_fr_ma_regime' in dir() and '_fr_ma_value' in dir()
+                         and not pd.isna(_fr_ma_value)
+                         else None),
             'НВ-03'   : _nv03_label,   # None → missing если истории < 30 дней
         }
 

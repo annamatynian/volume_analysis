@@ -117,6 +117,13 @@ _POLARITY_TABLE: dict[str, dict[str, str]] = {
         "RARE":    "BULLISH",   # CONTRARIAN: редкость = зона накопления
         "EXTREME": "BULLISH",   # CONTRARIAN: прецедент 2018 (финал медвежки)
     },
+    # --- М-15 | Funding Rate 30d MA ---
+    # FLOOR_ZONE → BULLISH: многолетний минимум фандинга, рынок платит лонгам;
+    # Mozart (11.03.2026): исторически предшествует дну цикла.
+    "М-15": {
+        "FLOOR_ZONE": "BULLISH",
+        "NEUTRAL":    "NEUTRAL",
+    },
     # --- НВ-03 | BTC Dominance — ротация ликвидности ---
     # Источник: пост 10.05.2026 (НВ-03, PLAN_MOZART_PATTERNS.md ЧАСТЬ 4)
     # API: CoinGecko /api/v3/global → поле btc_dominance (%)
