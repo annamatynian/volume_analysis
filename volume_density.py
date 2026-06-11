@@ -1982,7 +1982,8 @@ Retest Score: {_retest['score']:.3f}  —  {_rt_summary}
     # WHY через onchain_client: данные BGeometrics (8h интервал) с 2023-07-09.
     _fr_ma_regime = 'NEUTRAL'
     _fr_ma_value  = float('nan')
-    _fr_records   = MOZART_CONFIG['funding_rate_ma_window_days'] * 3  # 30d × 3 записи/день = 90
+    from mozart_config import MOZART_CONFIG as _MC_M15
+    _fr_records   = _MC_M15['funding_rate_ma_window_days'] * 3  # 30d × 3 записи/день = 90
     try:
         from mozart_signals import classify_funding_rate_ma_regime as _cls_m15
         _fr_df        = await onchain_client.get_funding_rate_series(records=_fr_records)
@@ -2022,8 +2023,8 @@ Basis Spread (spot vs futures): {(_basis['regime'] + f" ({_basis['basis_usd']:+,
 М-15 | Funding Rate 30d MA:
   MA ({_fr_records} записей / 8h) : {_fr_ma_str}  ({_fr_ma_pct})
   Режим  : {_fr_ma_regime}
-  FLOOR_ZONE : MA ≤ {MOZART_CONFIG['funding_rate_ma_floor']:+.4f} — Mozart-паттерн активен (пост 11.03.2026).
-  NEUTRAL    : MA > {MOZART_CONFIG['funding_rate_ma_floor']:+.4f} — обычный диапазон."""
+  FLOOR_ZONE : MA ≤ {_MC_M15['funding_rate_ma_floor']:+.4f} — Mozart-паттерн активен (пост 11.03.2026).
+  NEUTRAL    : MA > {_MC_M15['funding_rate_ma_floor']:+.4f} — обычный диапазон."""
     )
 
     # ------------------------------------------------------------------
@@ -2400,7 +2401,7 @@ MTH = Medium-Term Holder (1–6 мес.). Значения в абсолютны
             # --- [МБ-01 | REALIZED PRICE — «Синяя линия» дна цикла] ---
             try:
                 from mozart_signals import classify_realized_price_regime as _cls_rp
-                from mozart_config import MOZART_CONFIG
+                from mozart_config import MOZART_CONFIG as _MC_MB01
                 _rp_v = _hlast(_rp_mb01_df, 'realized_price')
                 if not pd.isna(_rp_v):
                     _rp_zone = _cls_rp(float(current_price), float(_rp_v))
@@ -2409,16 +2410,16 @@ MTH = Medium-Term Holder (1–6 мес.). Значения в абсолютны
                         'AT'   : 'цена в ±20% зоне Realized Price — историческая зона дна цикла.',
                         'BELOW': 'цена значительно ниже Realized Price (подтверждённый пробой уровня).',
                     }[_rp_zone]
-                    _buf_pct = int(MOZART_CONFIG['realized_price_buffer_pct'] * 100)
-                    _rp_upper = _rp_v * (1 + MOZART_CONFIG['realized_price_buffer_pct'])
-                    _rp_lower = _rp_v * (1 - MOZART_CONFIG['realized_price_buffer_pct'])
+                    _buf_pct = int(_MC_MB01['realized_price_buffer_pct'] * 100)
+                    _rp_upper = _rp_v * (1 + _MC_MB01['realized_price_buffer_pct'])
+                    _rp_lower = _rp_v * (1 - _MC_MB01['realized_price_buffer_pct'])
                     _rp_str   = f'${_rp_v:,.0f}'
                     _rp_upper_str = f'${_rp_upper:,.0f}'
                     _rp_lower_str = f'${_rp_lower:,.0f}'
                 else:
                     _rp_zone = _rp_zone_desc = 'н/д'
                     _rp_str = _rp_upper_str = _rp_lower_str = 'н/д'
-                    _buf_pct = int(MOZART_CONFIG['realized_price_buffer_pct'] * 100)
+                    _buf_pct = int(_MC_MB01['realized_price_buffer_pct'] * 100)
 
                 print(f"""
 [МБ-01 | REALIZED PRICE — «Синяя линия»]
@@ -2476,7 +2477,7 @@ True Market Mean : {_tmm_str}
             # --- [МБ-04 | SUPPLY IN LOSS] ---
             try:
                 from mozart_signals import classify_supply_loss_regime as _cls_sl
-                from mozart_config import MOZART_CONFIG
+                from mozart_config import MOZART_CONFIG as _MC_MB04
                 _sl_v = _hlast(_sl_mb04_df, 'supply_loss')
                 if not pd.isna(_sl_v):
                     _sl_zone = _cls_sl(float(_sl_v))
@@ -2491,8 +2492,8 @@ True Market Mean : {_tmm_str}
                     _sl_zone = _sl_zone_desc = 'н/д'
                     _sl_str = 'н/д'
 
-                _structural   = MOZART_CONFIG['supply_loss_structural_trigger']
-                _intermediate = MOZART_CONFIG['supply_loss_intermediate_trigger']
+                _structural   = _MC_MB04['supply_loss_structural_trigger']
+                _intermediate = _MC_MB04['supply_loss_intermediate_trigger']
 
                 print(f"""
 [МБ-04 | SUPPLY IN LOSS — монеты в убытке]
@@ -2948,6 +2949,7 @@ DAYS<1.0   : {_below_str}  (proxy_sopr < 1.0 подряд с последнег�
         _nv01_slope    = _nv01['slope']
         _nv01_proj     = _nv01['projected_next']
         _nv01_monotone = _nv01['is_monotone']
+        _nv01_label    = _nv01_regime   # WHY: _signals_sa ссылается на _nv01_label
 
         _nv01_desc = {
             'DESCENDING_STRONG': 'пики монотонно убывают — Mozart-паттерн подтверждён',
@@ -2960,6 +2962,7 @@ DAYS<1.0   : {_below_str}  (proxy_sopr < 1.0 подряд с последнег�
         _proj_str  = f"${_nv01_proj:,.0f}" if _nv01_proj is not None else 'н/д'
         _slope_str = f"{_nv01_slope:+.0f}" if _nv01_slope is not None else 'н/д'
 
+        from mozart_config import MOZART_CONFIG as _MC_NV01
         print(f"""
 [НВ-01 | РЕГРЕССИЯ УБЫВАЮЩИХ ПИКОВ]
 {'-'*66}
@@ -2967,7 +2970,7 @@ DAYS<1.0   : {_below_str}  (proxy_sopr < 1.0 подряд с последнег�
 Пиков       : {_nv01_peaks}  |  Slope: {_slope_str}  |  Монотонно: {_nv01_monotone}
 Проекция    : {_proj_str}  (следующий пик по регрессии, уровень цены)
 
-Что измеряет блок: swing high по high свечи (окно {MOZART_CONFIG['swing_high_window']} дней).
+Что измеряет блок: swing high по high свечи (окно {_MC_NV01['swing_high_window']} дней).
 Паттерн Mozart (пост 31.03.2026): 87k→84k→76k — серия убывающих локальных максимумов.
 DESCENDING_STRONG = монотонное убывание + slope < 0 (Mozart-паттерн активен).
 Проекция — следующая точка на регрессионной прямой (уровень, не дата).
@@ -2989,6 +2992,7 @@ DESCENDING_STRONG = монотонное убывание + slope < 0 (Mozart-п
         _ppi_series    = _macro_client.get_ppi_series(months=7)   # 7 → 3 изменения + запас
         _cpi_series    = _macro_client.get_cpi_series(months=2)   # текущий + предыдущий
         _ppi_regime    = classify_ppi_regime(_ppi_series)
+        _nv02_label    = _ppi_regime   # WHY: _signals_sa ссылается на _nv02_label
 
         # Значения для вывода
         _ppi_last      = _ppi_series.iloc[-1]
@@ -3251,7 +3255,13 @@ BTC.D (текущее) : {_nv03_cur_s}
                 # --- НВ-03: BTC Dominance ---
                 'btc_dominance_pct':   _btc_d_current if _btc_d_current is not None else None,
             }
-            _llm_summary = _gen_llm_summary(_alignment, _raw_metrics_llm)
+            _llm_summary = _gen_llm_summary(
+                _alignment,
+                _raw_metrics_llm,
+                # WHY signal_labels: передаём текущие строковые метки чтобы LLM не галлюцинировал
+                # значения вида DESCENDING_STRONG вместо WEAK, или «NOT PROVIDED» для НВ-02
+                signal_labels={k: v for k, v in _signals_sa.items() if v is not None},
+            )
             print(f"\n[MOZART SIGNAL SUMMARY]\n{'-'*66}\n{_llm_summary}")
         else:
             print(f"\n[MOZART SIGNAL SUMMARY]\n{'-'*66}\nНедоступен: Signal Alignment не выполнен.")

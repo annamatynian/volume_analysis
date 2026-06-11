@@ -10,6 +10,8 @@
 import os
 import pandas as pd
 from fredapi import Fred
+from dotenv import load_dotenv
+load_dotenv()  # WHY: FRED_API_KEY хранится в .env; load_dotenv() делает его доступным через os.environ
 
 # --- Конфигурация ---
 FRED_SERIES = {

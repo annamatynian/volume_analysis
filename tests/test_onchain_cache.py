@@ -309,6 +309,187 @@ class TestHolderStructureCacheMethods:
         )
 
 
+# ---------------------------------------------------------------------------
+# Группа 6: М-15 — get_funding_rate_series в CachedBGeometricsClient
+# ---------------------------------------------------------------------------
+
+class TestCachedFundingRate:
+    """
+    WHY этот класс: get_funding_rate_series — нестандартный метод.
+    Принимает records: int вместо start_date/end_date.
+    API игнорирует параметры дат и возвращает всю историю (~3178 записей).
+    Кэш-слой кэширует всю историю и возвращает tail(records).
+    Без этого метода в CachedBGeometricsClient — оркестратор получает
+    AttributeError и М-15 всегда попадает в 'Н/Д' в Signal Alignment.
+    """
+
+    def _make_funding_df(self, n: int = 5) -> pd.DataFrame:
+        """
+        Нейтральный мок-DataFrame: значения funding_rate не похожи
+        на реальные ставки Binance (0.0001), чтобы не создавать
+        ложной связи с production-константами.
+        """
+        return pd.DataFrame({
+            'date': pd.date_range('2024-01-01', periods=n, freq='8h'),
+            'funding_rate': [float(i) * 0.1 for i in range(1, n + 1)],
+        })
+
+    # ------------------------------------------------------------------
+    # Тест 1: метод существует и делегирует к inner client
+    # ------------------------------------------------------------------
+
+    def test_method_exists_and_delegates(self, tmp_path):
+        """
+        WHY: отсутствие делегации — прямой источник текущего
+        '[WARN] М-15: CachedBGeometricsClient object has no attribute
+        get_funding_rate_series' в оркестраторе. М-15 попадает в Н/Д.
+        """
+        df = self._make_funding_df(5)
+        mock_inner = MagicMock()
+        mock_inner.get_funding_rate_series = AsyncMock(return_value=df)
+
+        client = CachedBGeometricsClient(client=mock_inner, cache_dir=tmp_path)
+        asyncio.run(client.get_funding_rate_series(records=5))
+
+        # WHY: если метод не делегирует — inner никогда не вызывается,
+        # оркестратор никогда не получает данные М-15.
+        mock_inner.get_funding_rate_series.assert_called_once()
+
+    # ------------------------------------------------------------------
+    # Тест 2: при свежем кэше inner client НЕ вызывается
+    # ------------------------------------------------------------------
+
+    def test_fresh_cache_skips_inner_client(self, tmp_path):
+        """
+        WHY: кэш-слой должен защищать от лимита 10 req/hour.
+        Если при свежем кэше всё равно вызывается API — лимит
+        исчерпывается за один прогон оркестратора.
+        """
+        df = self._make_funding_df(5)
+        # Сохраняем свежий кэш вручную
+        cache_path = build_cache_path('funding-rate', tmp_path)
+        save_to_cache(df, cache_path)
+        # mtime по умолчанию = сейчас → кэш свежий
+
+        mock_inner = MagicMock()
+        mock_inner.get_funding_rate_series = AsyncMock(return_value=df)
+
+        client = CachedBGeometricsClient(client=mock_inner, cache_dir=tmp_path)
+        asyncio.run(client.get_funding_rate_series(records=5))
+
+        # WHY: inner НЕ должен вызываться если кэш свежий —
+        # иначе кэш не выполняет своей функции защиты от rate-limit.
+        mock_inner.get_funding_rate_series.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # Тест 3: при отсутствии кэша вызывается inner, результат кэшируется
+    # ------------------------------------------------------------------
+
+    def test_no_cache_calls_inner_and_saves(self, tmp_path):
+        """
+        WHY: контракт cache-first — при пустом кэше данные должны
+        прийти от inner и сохраниться. Если не сохраняются —
+        следующий вызов снова пойдёт в API, быстро исчерпав лимит.
+        """
+        df = self._make_funding_df(5)
+        mock_inner = MagicMock()
+        mock_inner.get_funding_rate_series = AsyncMock(return_value=df)
+
+        client = CachedBGeometricsClient(client=mock_inner, cache_dir=tmp_path)
+        asyncio.run(client.get_funding_rate_series(records=5))
+
+        expected_cache = build_cache_path('funding-rate', tmp_path)
+        # WHY: файл кэша должен появиться после вызова —
+        # иначе каждый прогон оркестратора делает новый API-запрос.
+        assert expected_cache.exists(), (
+            'После вызова API данные должны быть сохранены в кэш '
+            f'по пути {expected_cache.name}'
+        )
+
+    # ------------------------------------------------------------------
+    # Тест 4: возвращает DataFrame с колонками ['date', 'funding_rate']
+    # ------------------------------------------------------------------
+
+    def test_returns_dataframe_with_correct_columns(self, tmp_path):
+        """
+        WHY: оркестратор ожидает колонки ['date', 'funding_rate'].
+        Если имена колонок отличаются — KeyError при вычислении MA,
+        М-15 падает с необработанным исключением.
+        """
+        df = self._make_funding_df(5)
+        mock_inner = MagicMock()
+        mock_inner.get_funding_rate_series = AsyncMock(return_value=df)
+
+        client = CachedBGeometricsClient(client=mock_inner, cache_dir=tmp_path)
+        result = asyncio.run(client.get_funding_rate_series(records=5))
+
+        # WHY: контракт колонок — оркестратор обращается к df['funding_rate']
+        # и df['date'] напрямую; отсутствие любой из них = silent wrong calc.
+        assert 'date' in result.columns, (
+            "Колонка 'date' обязательна — оркестратор сортирует по дате"
+        )
+        assert 'funding_rate' in result.columns, (
+            "Колонка 'funding_rate' обязательна — по ней считается 30d MA"
+        )
+        assert isinstance(result, pd.DataFrame), (
+            'get_funding_rate_series должен возвращать pd.DataFrame, '
+            'не список или другой тип'
+        )
+
+    # ------------------------------------------------------------------
+    # Тест 5 (граница): records > len(кэша) — не падает, возвращает всё
+    # ------------------------------------------------------------------
+
+    def test_records_exceeds_cache_length_returns_all(self, tmp_path):
+        """
+        WHY граничное значение: если в кэше 3 строки, а запросили
+        records=100 — tail(100) на DataFrame из 3 строк должен вернуть
+        3 строки, не вызвать исключение. Проверяем что cache-слой
+        не добавляет дополнительных ограничений сверх pandas-поведения.
+        """
+        small_df = self._make_funding_df(3)  # 3 строки
+        cache_path = build_cache_path('funding-rate', tmp_path)
+        save_to_cache(small_df, cache_path)
+
+        mock_inner = MagicMock()
+        mock_inner.get_funding_rate_series = AsyncMock()
+
+        client = CachedBGeometricsClient(client=mock_inner, cache_dir=tmp_path)
+        result = asyncio.run(client.get_funding_rate_series(records=100))
+
+        # WHY: pandas tail(N) при N > len возвращает весь DataFrame —
+        # cache-слой не должен нарушать это поведение или вызывать IndexError.
+        assert len(result) == 3, (
+            f'Ожидали 3 строки (весь кэш), получили {len(result)}. '
+            'tail(N) при N > len должен возвращать все доступные строки.'
+        )
+
+    # ------------------------------------------------------------------
+    # Тест 6: уникальный cache key 'funding-rate'
+    # ------------------------------------------------------------------
+
+    def test_uses_unique_cache_key(self, tmp_path):
+        """
+        WHY: уникальный metric_key → уникальный parquet-файл.
+        Если funding-rate перепутать с другим ключом —
+        данные funding rate перезапишут другую метрику (silent corruption).
+        """
+        df = self._make_funding_df(5)
+        mock_inner = MagicMock()
+        mock_inner.get_funding_rate_series = AsyncMock(return_value=df)
+
+        client = CachedBGeometricsClient(client=mock_inner, cache_dir=tmp_path)
+        asyncio.run(client.get_funding_rate_series(records=5))
+
+        expected_path = build_cache_path('funding-rate', tmp_path)
+        # WHY: файл должен называться 'funding-rate.parquet' —
+        # оркестратор и cache-invalidation опираются на этот ключ.
+        assert expected_path.exists(), (
+            f'Кэш М-15 должен писаться в funding-rate.parquet, '
+            f'но файл не найден в {tmp_path}'
+        )
+
+
 # ===========================================================================
 # P1–P5: Expansion — cache behavior (PLAN_ONCHAIN_EXPANSION.md 2026-05-10)
 # ===========================================================================

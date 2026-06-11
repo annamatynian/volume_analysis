@@ -597,3 +597,49 @@ class CachedBGeometricsClient:
                 end_date=end_date,
             ),
         )
+
+    async def get_funding_rate_series(
+        self,
+        records: int = 90,
+    ) -> pd.DataFrame:
+        """
+        М-15: Funding Rate 8h серия для 30d MA. Cache-first.
+
+        WHY records вместо start/end: API игнорирует параметры дат,
+        всегда возвращает всю историю. Кэшируем всю историю,
+        возвращаем tail(records) — без повторных API-запросов.
+
+        WHY не через _get_with_cache: стандартный хелпер не умеет передавать
+        records в inner-метод и применять tail к результату перед возвратом.
+
+        Args:
+            records: Количество 8-часовых записей для возврата.
+                     30 дней × 3 записи/день = 90 (дефолт).
+
+        Returns:
+            DataFrame [date, funding_rate] — последние `records` записей.
+        """
+        cache_path = build_cache_path('funding-rate', self._cache_dir)
+        has_stale = cache_path.exists()
+
+        if is_cache_fresh(cache_path, self._max_age_hours):
+            df = load_from_cache(cache_path)
+            return df.tail(records).reset_index(drop=True)
+
+        try:
+            df = await self._client.get_funding_rate_series(records=9999)
+            save_to_cache(df, cache_path)
+            return df.tail(records).reset_index(drop=True)
+        except Exception as _exc:
+            if has_stale:
+                _age_h = (
+                    datetime.now()
+                    - datetime.fromtimestamp(cache_path.stat().st_mtime)
+                ).total_seconds() / 3600
+                print(
+                    f'[WARN] funding-rate: API недоступен ({_exc.__class__.__name__}: {_exc}), '
+                    f'используется устаревший кэш ({_age_h:.0f}ч назад).'
+                )
+                df = load_from_cache(cache_path)
+                return df.tail(records).reset_index(drop=True)
+            raise
