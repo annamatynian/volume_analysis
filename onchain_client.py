@@ -680,7 +680,10 @@ class BGeometricsClient:
 
         df = pd.DataFrame(data)
         df = df.rename(columns={'d': 'date'})
-        df['date'] = pd.to_datetime(df['date'])
+        # WHY format='mixed': API возвращает даты с миллисекундами ('2024-01-01 00:00:00.001').
+        # Стандартный парсинг без формата вызывает UserWarning об остатке '.001'.
+        # WHY floor('s'): обрезаем субсекундную часть — 8h-интервалы без миллисекунд.
+        df['date'] = pd.to_datetime(df['date'], format='mixed').dt.floor('s')
         df['funding_rate'] = df['fundingRate'].astype(float)
         df = df[['date', 'funding_rate']].sort_values('date').reset_index(drop=True)
 
