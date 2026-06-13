@@ -2514,6 +2514,61 @@ Supply in Loss : {_sl_str}
             except Exception as _sl_e:
                 print(f"\n[МБ-04 | SUPPLY IN LOSS]\n{'-'*66}\nДанные недоступны: {_sl_e}")
 
+            # --- [МБ-05 | LTH REALIZED PROFIT — давление распределения] ---
+            try:
+                from mozart_signals import classify_lth_profit_regime as _cls_mb05
+                from mozart_config import MOZART_CONFIG as _MC_MB05
+                # WHY отдельный fetch: realized-profit-lth-usd требует больше данных
+                # для 7-дневной MA — запрашиваем 14 дней с запасом.
+                from datetime import timedelta as _tdmb05
+                _mb05_end   = datetime.now()
+                _mb05_start = _mb05_end - _tdmb05(days=14)
+                _mb05_df    = await _hc.get_lth_realized_profit_usd(
+                    start_date=_mb05_start, end_date=_mb05_end
+                )
+                _mb05_window = _MC_MB05['lth_profit_ma_window_days']
+                _mb05_warning  = _MC_MB05['lth_profit_7d_ma_warning']
+                _mb05_moderate = _MC_MB05['lth_profit_7d_ma_moderate']
+
+                if not _mb05_df.empty and 'lth_realized_profit_usd' in _mb05_df.columns:
+                    _mb05_last   = float(_mb05_df['lth_realized_profit_usd'].iloc[-1])
+                    _mb05_ma_ser = _mb05_df['lth_realized_profit_usd'].rolling(_mb05_window).mean()
+                    _mb05_ma     = float(_mb05_ma_ser.iloc[-1]) if not pd.isna(_mb05_ma_ser.iloc[-1]) else float('nan')
+                else:
+                    _mb05_last = _mb05_ma = float('nan')
+
+                if not pd.isna(_mb05_ma):
+                    _mb05_regime = _cls_mb05(_mb05_ma)
+                    _mb05_ma_str   = f'${_mb05_ma / 1_000_000:.1f} млн/день'
+                    _mb05_last_str = f'${_mb05_last / 1_000_000:.1f} млн' if not pd.isna(_mb05_last) else 'н/д'
+                else:
+                    _mb05_regime   = 'LOW'
+                    _mb05_ma_str   = 'н/д'
+                    _mb05_last_str = 'н/д'
+                    _mb05_ma       = float('nan')
+
+                print(f"""
+[МБ-05 | LTH REALIZED PROFIT — давление распределения]
+{'-'*66}
+Что измеряет: объём USD, реализованный LTH-когортой (монеты >155 дней) в прибыль за день.
+Mozart (пост 14.01.2026): пик ноября 2025 ~$2 млрд/день = «капитуляция в остаточном профите».
+
+Realized Profit LTH (последний день) : {_mb05_last_str}
+{_mb05_window}-дневная MA                   : {_mb05_ma_str}
+Режим                            : {_mb05_regime}
+
+Порог HIGH_PRESSURE (по Mozart) : MA >= ${_mb05_warning / 1_000_000_000:.1f} млрд/день.
+Порог MODERATE (FORMALIZED)   : MA > ${_mb05_moderate / 1_000_000:.0f} млн/день.
+Зоны:
+  HIGH_PRESSURE : MA >= $1B/день — Mozart: «риски смещены в сторону медвежки».
+  MODERATE      : $500M–$1B/день — умеренное давление распределения. FORMALIZED.
+  LOW           : <= $500M/день — давление слабое."""
+                )
+            except Exception as _mb05_e:
+                _mb05_regime = None
+                _mb05_ma     = float('nan')
+                print(f"\n[МБ-05 | LTH REALIZED PROFIT]\n{'-'*66}\nДанные недоступны: {_mb05_e}")
+
             # --- [МБ-06 | NUPL] ---
             try:
                 from mozart_signals import classify_nupl_regime as _cls_nupl
@@ -3169,6 +3224,9 @@ BTC.D (текущее) : {_nv03_cur_s}
                          if '_nv02_label' in dir() and _nv02_label is not None
                          else None),
             'НВ-03'   : _nv03_label,   # None → missing если истории < 30 дней
+            'МБ-05'   : (_mb05_regime
+                         if '_mb05_regime' in dir() and _mb05_regime is not None
+                         else None),
         }
 
         _alignment = build_alignment(_signals_sa)

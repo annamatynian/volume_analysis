@@ -52,8 +52,11 @@ MOZART_CONFIG: dict = {
 
     # ── МБ-05 | LTH Realized Profit 7d MA ───────────────────────────────────
     # Источник: пост 14.01.2026 (МБ-05, ЧАСТЬ 2)
-    # MA > lth_profit_7d_ma_warning → HIGH давление распределения (медвежий риск)
-    "lth_profit_7d_ma_warning": 1_000_000_000,   # USD/день
+    # MA > lth_profit_7d_ma_warning → HIGH_PRESSURE (медвежий риск по Mozart)
+    # MA > lth_profit_7d_ma_moderate → MODERATE (умеренное давление)
+    # MA <= lth_profit_7d_ma_moderate → LOW (давление слабое)
+    "lth_profit_7d_ma_warning":  1_000_000_000,   # USD/день — Mozart, пост 14.01.2026
+    "lth_profit_7d_ma_moderate":   500_000_000,   # FORMALIZED: половина порога Mozart
     "lth_profit_ma_window_days": 7,
 
     # ── МБ-08 | One-Cycle Holders Average (realized-cap-hodl-waves) ──────────

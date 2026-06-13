@@ -155,6 +155,15 @@ _POLARITY_TABLE: dict[str, dict[str, str]] = {
         "NEUTRAL":          "NEUTRAL",
         "ROTATION_BTC":     "NEUTRAL",   # FORMALIZED: нет явной интерпретации Mozart
     },
+    # --- МБ-05 | LTH Realized Profit — давление распределения ---
+    # Источник: пост 14.01.2026 (МБ-05, PLAN_MOZART_PATTERNS.md ЧАСТЬ 2)
+    # HIGH_PRESSURE → BEARISH: Mozart явно: MA > $1B/день = «риски смещены в сторону медвежки».
+    # MODERATE/LOW → NEUTRAL: недостаточно для сигнала; $500M FORMALIZED.
+    "МБ-05": {
+        "HIGH_PRESSURE": "BEARISH",
+        "MODERATE":      "NEUTRAL",
+        "LOW":           "NEUTRAL",
+    },
 }
 
 

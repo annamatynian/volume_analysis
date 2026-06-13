@@ -616,3 +616,34 @@ class TestNV02PPIRegime:
             signal_polarity('НВ-02', 'НЕСУЩЕСТВУЮЩАЯ_ЗОНА')
         # WHY: рассинхрон classify/polarity -> ValueError вместо тихого NEUTRAL.
 
+
+# ===========================================================================
+# МБ-05 | LTH Realized Profit — давление распределения
+# ===========================================================================
+
+class TestMB05LthProfit:
+    """Контракт МБ-05: HIGH_PRESSURE -> BEARISH, MODERATE/LOW -> NEUTRAL."""
+
+    def test_high_pressure_is_bearish(self):
+        result = signal_polarity('МБ-05', 'HIGH_PRESSURE')
+        assert result == 'BEARISH'
+        # WHY: Mozart (пост 14.01.2026): MA > $1B/день = «риски смещены
+        # в сторону медвежки». Если не BEARISH — alignment пропустит медвежий сигнал.
+
+    def test_moderate_is_neutral(self):
+        result = signal_polarity('МБ-05', 'MODERATE')
+        assert result == 'NEUTRAL'
+        # WHY: MODERATE — умеренное давление, недостаточно для сигнала Mozart.
+        # FORMALIZED: порог $500M не назван в посте 14.01.2026.
+
+    def test_low_is_neutral(self):
+        result = signal_polarity('МБ-05', 'LOW')
+        assert result == 'NEUTRAL'
+        # WHY: LOW — давление LTH слабое; Mozart не считает это бычьим сигналом.
+        # NEUTRAL не считается в score alignment.
+
+    def test_unknown_label_raises(self):
+        with pytest.raises(ValueError):
+            signal_polarity('МБ-05', 'НЕСУЩЕСТВУЮЩАЯ_ЗОНА')
+        # WHY: рассинхрон classify/polarity -> ValueError вместо тихого NEUTRAL.
+

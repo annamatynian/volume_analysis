@@ -1283,3 +1283,40 @@ def classify_funding_rate_ma_regime(ma_value: float) -> str:
         return 'FLOOR_ZONE'
     return 'NEUTRAL'
 
+
+def classify_lth_profit_regime(profit_ma7_usd: float) -> str:
+    """
+    МБ-05 | Режим давления LTH по 7-дневной MA реализованной прибыли.
+
+    Mozart (пост 14.01.2026):
+      "если давление продаж вновь сильно возрастёт
+      (выше 1 млрд $ / день в среднем за 7 дней),
+      то риски будут смещены в сторону медвежки"
+
+    Args:
+        profit_ma7_usd: 7-дневная MA дневной прибыли LTH, USD (всегда >= 0).
+
+    Returns:
+        'HIGH_PRESSURE'  — MA >= warning ($1B): медвежий риск по Mozart.
+        'MODERATE'       — moderate < MA < warning ($500M–$1B):
+                           умеренное давление. FORMALIZED.
+        'LOW'            — MA <= moderate (<= $500M): давление слабое.
+
+    WHY включительная граница warning (порог Mozart включается в HIGH_PRESSURE):
+        Mozart оперирует "выше" — т.е. >= 1B активирует риск.
+        Аналогично lth_sopr_rubicon: 1.0 включительно входит в BULL.
+
+    WHY включительная граница moderate (порог включается в LOW):
+        FORMALIZED-порог $500M — нижняя граница MODERATE-зоны.
+        Равно порогу = ещё не умеренное давление — включается в LOW.
+    """
+    from mozart_config import MOZART_CONFIG
+    warning  = MOZART_CONFIG['lth_profit_7d_ma_warning']
+    moderate = MOZART_CONFIG['lth_profit_7d_ma_moderate']
+
+    if profit_ma7_usd >= warning:
+        return 'HIGH_PRESSURE'
+    if profit_ma7_usd > moderate:
+        return 'MODERATE'
+    return 'LOW'
+
