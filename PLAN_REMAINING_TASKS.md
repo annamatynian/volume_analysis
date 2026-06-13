@@ -216,6 +216,9 @@ missing (API 404/403) → не влияет на score, отдельный сп�
   БАГ   Mozart LLM gemini-2.0-flash quota=0      ␅ ЗАКРЫТ (2026-05-25, → gemini-2.5-flash)
   НВ-01 Регрессия убывающих пиков → alignment    ✅ ЗАКРЫТ (2026-06-03, 820p/76s/0f)
   НВ-02 PPI→CPI макро-фильтр → alignment         ✅ ЗАКРЫТ (2026-06-03, 820p/76s/0f)
+  М-15  Funding Rate 30d MA → alignment           ✅ ЗАКРЫТ (2026-06-10, 820p/76s/0f)
+  МБ-05 LTH Realized Profit → orchestrator+LLM    ✅ ЗАКРЫТ (2026-06-13, 840p/76s/0f)
+  НВ-03 BTC Dominance 30d rotation                ⏳ ЖДЁМ накопления кэша (~10 июля 2026)
 ```
 
 ---
