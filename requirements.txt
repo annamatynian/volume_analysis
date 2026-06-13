@@ -32,3 +32,5 @@ fredapi>=0.5            # FRED API: PPI (PPIACO), CPI (CPIAUCSL) — блок Н
 # --- Утилиты ---
 pytz>=2023.3            # timezone handling (conftest.py фильтрует DeprecationWarning)
 requests>=2.28          # HTTP download в download_anchor_data.py
+google-genai>=1.0       # LLM summary via Gemini 2.5 Flash (mozart_llm.py)
+python-dotenv>=1.0      # FRED API key из .env файла (macro_client.py)
