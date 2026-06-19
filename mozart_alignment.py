@@ -24,7 +24,8 @@ from typing import Optional
 # BOTH_BUYING → NEUTRAL (** сноска в плане: нет перетока когорт).
 # МБ-03 EUPHORIA → BULLISH (упрощение; флаг euphoria_convergence в L3-2).
 # М-05 EUPHORIA → BEARISH (риск дистрибуции LTH на вершине цикла).
-# М-09 принимает строки 'True'/'False' (str(detect_sth_rp_zscore_turning())).
+# М-09 и М-01-Т принимают строки 'True'/'False'
+# (str(detect_sth_rp_zscore_turning()) и str(detect_lth_sopr_turning()) соответственно).
 
 _POLARITY_TABLE: dict[str, dict[str, str]] = {
     # --- М-01 | LTH SOPR ---
@@ -73,6 +74,33 @@ _POLARITY_TABLE: dict[str, dict[str, str]] = {
     },
     # --- М-09 | STH RP Z-score turning (bool → str) ---
     "М-09": {
+        "True":  "BULLISH",
+        "False": "NEUTRAL",
+    },
+    # --- М-02-Т | STH SOPR turning (вектор пересечения рубикона) ---
+    # Источник: паттерн М-02 (пост 16.04.2026). Отдельный сигнал от 'М-02'
+    # (зона classify_sth_sopr_regime) — по прецеденту М-01/М-01-Т.
+    # UPWARD → BEARISH: STH дошли до рубикона снизу = отскок упёрся в сопротивление
+    #   безубытка спекулянтов. Векторная информация, которой нет у зонального М-02.
+    # DOWNWARD → BULLISH (контрарианский): пробой STH SOPR вниз = капитуляция STH
+    #   = дно близко. Аналог М-01-Т (True → BULLISH) и М-09 (True → BULLISH).
+    # FORMALIZED: Mozart не описывает разницу направления подхода к рубикону STH SOPR
+    #   явно. Самостоятельная гипотеза по аналогии с логикой пробоя уровня в TA.
+    "М-02-Т": {
+        "UPWARD":   "BEARISH",
+        "DOWNWARD": "BULLISH",  # CONTRARIAN: капитуляция STH = дно близко
+    },
+    # --- М-01-Т | LTH SOPR turning (паттерн В, bool → str) ---
+    # Источник: пост 05.04.2026. Отдельный сигнал от 'М-01' (зона
+    # classify_lth_sopr_regime) — по аналогии с парой М-09/Z-score: классификатор
+    # зоны и детектор разворота развязаны нарочно: не добавляет пятый
+    # статус внутри classify_lth_sopr_regime, не трогает существующие
+    # 19 тестов test_mozart_lth_sopr.py.
+    # True → BULLISH: SOPR перестал падать и начал расти после капитуляции —
+    # Mozart: дно формируется именно в этот момент.
+    # False → NEUTRAL, не BEARISH: отсутствие разворота само по себе не медвежий
+    # факт — направление уже учтено отдельным сигналом 'М-01'.
+    "М-01-Т": {
         "True":  "BULLISH",
         "False": "NEUTRAL",
     },
@@ -179,6 +207,7 @@ def signal_polarity(signal_id: str, label: str) -> str:
         signal_id: Идентификатор сигнала ('М-01', 'Н-01', 'МБ-03' и т.д.).
         label:     Метка зоны, возвращённая classify-функцией Уровня 2.
                    Для М-09: str(detect_sth_rp_zscore_turning()) → 'True'/'False'.
+                   Для М-01-Т: str(detect_lth_sopr_turning()) → 'True'/'False'.
 
     Returns:
         str: 'BULLISH' | 'NEUTRAL' | 'BEARISH'

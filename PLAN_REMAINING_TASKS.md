@@ -220,6 +220,8 @@ missing (API 404/403) → не влияет на score, отдельный сп�
   МБ-05 LTH Realized Profit → orchestrator+LLM    ✅ ЗАКРЫТ (2026-06-13, 840p/76s/0f)
   НВ-03 BTC Dominance 30d rotation                ⏳ ЖДЁМ накопления кэша (~10 июля 2026)
   mozart_agent.py интерактивный агент             ✅ ЗАКРЫТ (2026-06-16, 859p/76s/0f)
+  М-01-Т LTH SOPR Turning → alignment             ✅ ЗАКРЫТ (2026-06-17, 862p/76s/0f)
+  М-02-Т STH SOPR — вектор пересечения рубикона → alignment   ✅ ЗАКРЫТ (2026-06-18, 884p/76s/0f)
 ```
 
 ---

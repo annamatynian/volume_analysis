@@ -232,6 +232,73 @@ class TestM09SthRpZscoreTurning:
 
 
 # ===========================================================================
+# М-02-Т | STH SOPR turning (вектор пересечения рубикона)
+# ===========================================================================
+
+class TestM02TSthSoprTurning:
+    """Контракт М-02-Т: detect_sth_sopr_turning возвращает 'UPWARD'/'DOWNWARD'/None;
+    при передаче в signal_polarity используется строка напрямую.
+    Отдельный сигнал от 'М-02' (зона classify_sth_sopr_regime) — по прецеденту М-01/М-01-Т."""
+
+    def test_upward_is_bearish(self):
+        assert signal_polarity("М-02-Т", "UPWARD") == "BEARISH"
+        # WHY: STH дошли до рубикона снизу = отскок упёрся в сопротивление безубытка
+        # спекулянтов. Векторная информация, которой нет у зонального М-02.
+        # BULLISH/NEUTRAL здесь = alignment пропустит медвежий сигнал сопротивления.
+
+    def test_downward_is_bullish_contrarian(self):
+        result = signal_polarity("М-02-Т", "DOWNWARD")
+        assert result == "BULLISH", (
+            # WHY (КОНТРАРИАНСКИЙ): пробой STH SOPR вниз = капитуляция STH =
+            # дно близко. Аналог М-01-Т (True → BULLISH): капитуляция не означает
+            # 'всё плохо', а 'давление иссякает'. BEARISH/NEUTRAL здесь = alignment
+            # пропустит контрарианский сигнал, ради которого существует detect_sth_sopr_turning.
+        )
+
+    def test_unknown_label_raises(self):
+        with pytest.raises(ValueError):
+            signal_polarity("М-02-Т", "НЕИЗВЕСТНАЯ")
+        # WHY: оркестратор обязан передавать только 'UPWARD'/'DOWNWARD'.
+        # Любая другая метка — признак рассинхрона (например, забыли пропустить
+        # результат detect через _signals_sa) — ValueError принудит заметить.
+
+
+# ===========================================================================
+# М-01-Т | LTH SOPR turning (паттерн В) — bool-результат → строка
+# ===========================================================================
+
+class TestM01TLthSoprTurning:
+    """Контракт М-01-Т: detect_lth_sopr_turning возвращает bool;
+    при передаче в signal_polarity используется str(bool): 'True'/'False'.
+    Отдельный сигнал от 'М-01' (зона classify_lth_sopr_regime) — по аналогии
+    с парой М-09/Z-score: классификатор зоны и детектор разворота развязаны,
+    чтобы не плодить пятый статус внутри classify_lth_sopr_regime и не трогать
+    существующие 19 тестов test_mozart_lth_sopr.py."""
+
+    def test_true_is_bullish(self):
+        assert signal_polarity("М-01-Т", "True") == "BULLISH"
+        # WHY: Паттерн В (пост 05.04.2026) — LTH SOPR перестал падать и начал
+        # расти после капитуляции; Mozart: дно формируется именно в этот момент,
+        # не когда SOPR продолжает снижаться. NEUTRAL/BEARISH здесь пропустили бы
+        # разворотный сигнал, ради которого detect_lth_sopr_turning существует.
+
+    def test_false_is_neutral(self):
+        assert signal_polarity("М-01-Т", "False") == "NEUTRAL"
+        # WHY: Разворот не подтверждён (SOPR ещё падает, застыл на дне, или
+        # недостаточно истории) — отсутствие паттерна само по себе не медвежий
+        # факт, направление уже учтено отдельно сигналом 'М-01'. BEARISH здесь
+        # задвоил бы медвежий вес capitulation-зоны через два сигнала одновременно.
+
+    def test_unknown_label_raises(self):
+        with pytest.raises(ValueError):
+            signal_polarity("М-01-Т", "НЕИЗВЕСТНАЯ")
+        # WHY: оркестратор обязан передавать только str(bool) ('True'/'False').
+        # Любая другая метка — признак рассинхрона (например, забыли обернуть
+        # detect_lth_sopr_turning() в str()) — ValueError принудит заметить это,
+        # а не получить тихий NEUTRAL.
+
+
+# ===========================================================================
 # М-10 | LTH Realized Loss
 # ===========================================================================
 

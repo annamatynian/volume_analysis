@@ -2247,6 +2247,111 @@ NUPL = net unrealized profit/loss — точнее MVRV, учитывает ре
 Net Position 30d = приток минус отток BTC в когорту за скользящие 30 дней."""
             )
 
+            # --- [М-01-Т | LTH SOPR — паттерн В: разворот со дна] ---
+            # WHY отдельный запрос: общий _h_start/_h_end (7 дней) разделяется между
+            # всеми holder-метриками выше и берётся только .iloc[-1] — недостаточно
+            # для detect_lth_sopr_turning, которой нужен временной ряд из минимум
+            # window точек. Отдельный запрос по аналогии с блоком М-09 ниже —
+            # не расширяем общий диапазон, чтобы не затронуть другие 8 метрик.
+            try:
+                from mozart_signals import detect_lth_sopr_turning
+                from mozart_config import MOZART_CONFIG as _MC_M01T
+
+                _m01t_window = _MC_M01T["lth_sopr_turning_window"]   # 5
+                # WHY +10 дней буфер: защита от пропусков/выходных в данных API —
+                # без буфера даже один пропущенный день сдвинет окно и искажает разворот.
+                from datetime import timedelta as _tdm01t
+                _m01t_end   = datetime.now()
+                _m01t_start = _m01t_end - _tdm01t(days=_m01t_window + 10)
+                _m01t_df    = await _hc.get_lth_sopr(start_date=_m01t_start, end_date=_m01t_end)
+
+                if _m01t_df.empty or len(_m01t_df) < _m01t_window:
+                    raise ValueError(
+                        f"LTH SOPR turning: недостаточно данных "
+                        f"({len(_m01t_df)} строк, нужно >={_m01t_window})"
+                    )
+
+                # WHY sort_values: API может вернуть данные не в хронопорядке —
+                # detect_lth_sopr_turning ожидает старые → новые по контракту.
+                _m01t_df      = _m01t_df.sort_values('date').reset_index(drop=True)
+                _lth_sopr_hist = _m01t_df['lth_sopr'].tolist()
+                _m01t_turning  = detect_lth_sopr_turning(_lth_sopr_hist, window=_m01t_window)
+                _m01t_err      = None
+
+            except Exception as _m01t_e:
+                _m01t_turning = False
+                _m01t_err     = str(_m01t_e)
+
+            _m01t_turn_str = 'да' if _m01t_turning else 'нет'
+
+            print(f"""
+[М-01-Т | LTH SOPR — паттерн В: разворот со дна]
+{'-'*66}
+Разворот LTH SOPR (окно={_m01t_window}d) : {_m01t_turn_str}
+
+Mozart (пост 05.04.2026): «LTH SOPR перестаёт падать и начинает расти» —
+это и есть момент формирования дна, не само падение SOPR в зону капитуляции.
+Отделён от зоны 'М-01' (classify_lth_sopr_regime): зона описывает текущий
+уровень убытка LTH, этот сигнал — изменилось ли направление метрики.
+{('[WARN] ' + _m01t_err) if _m01t_err else ''}"""
+            )
+
+            # --- [М-02-Т | STH SOPR — вектор пересечения рубикона] ---
+            # WHY отдельный запрос: общий _h_start/_h_end (7 дней) даёт только .iloc[-1] —
+            # недостаточно для detect_sth_sopr_turning, которой нужен временной ряд из
+            # минимум window точек зон (не float-значений).
+            # WHY зоны, не float: функция принимает список строк из classify_sth_sopr_regime.
+            # WHY +10 дней буфер: аналогично М-01-Т — защита от пропусков API.
+            try:
+                from mozart_signals import (
+                    detect_sth_sopr_turning   as _det_m02t,
+                    classify_sth_sopr_regime  as _cls_m02t_zone,
+                )
+                from mozart_config import MOZART_CONFIG as _MC_M02T
+
+                _m02t_window = _MC_M02T["sth_sopr_turning_window"]   # 5
+                from datetime import timedelta as _tdm02t
+                _m02t_end   = datetime.now()
+                _m02t_start = _m02t_end - _tdm02t(days=_m02t_window + 10)
+                _m02t_df    = await _hc.get_sth_sopr(start_date=_m02t_start, end_date=_m02t_end)
+
+                if _m02t_df.empty or len(_m02t_df) < _m02t_window:
+                    raise ValueError(
+                        f"STH SOPR turning: недостаточно данных "
+                        f"({len(_m02t_df)} строк, нужно >={_m02t_window})"
+                    )
+
+                _m02t_df      = _m02t_df.sort_values('date').reset_index(drop=True)
+                # WHY classify каждое значение: detect_sth_sopr_turning принимает
+                # список зон, а не float — это единственный правильный контракт.
+                _sth_sopr_zones = [
+                    _cls_m02t_zone(float(v))
+                    for v in _m02t_df['sth_sopr'].tolist()
+                ]
+                _m02t_vector  = _det_m02t(_sth_sopr_zones, window=_m02t_window)
+                _m02t_err     = None
+
+            except Exception as _m02t_e:
+                _m02t_vector = None
+                _m02t_err    = str(_m02t_e)
+
+            _m02t_vec_str = _m02t_vector if _m02t_vector is not None else 'нет сигнала'
+
+            print(f"""
+[М-02-Т | STH SOPR — вектор пересечения рубикона]
+{'-'*66}
+Вектор STH SOPR (окно={_m02t_window}d) : {_m02t_vec_str}
+
+Мозарт (пост 16.04.2026): STH SOPR рубикон (1.0) — зона поддержки на бычьем
+рынке и сопротивления на медвежьем. Направление подхода уточняет контекст:
+  UPWARD   : STH движутся к рубикону снизу — отскок упёрся в сопротивление безубытка.
+  DOWNWARD : STH пробили рубикон вниз — капитуляция STH, давление иссякает.
+  нет сигнала : зоны в окне не изменились.
+Отделён от зоны 'М-02' (classify_sth_sopr_regime): зона описывает текущее
+положение STH SOPR, этот сигнал — изменилось ли направление движения.
+{('[WARN] ' + _m02t_err) if _m02t_err else ''}"""
+            )
+
             # --- [М-09 | STH Realized Price — паттерн В] ---
             # WHY здесь: данные STH RP уже есть в _hc; BTC close есть в df.
             # Фильтр цены: rolling 7d std доходностей BTC < sth_rp_btc_vol_7d_pct_max.
@@ -3179,6 +3284,12 @@ BTC.D (текущее) : {_nv03_cur_s}
         _signals_sa = {
             'М-01'    : (_cls_m01(_lth_sopr_v)
                          if '_lth_sopr_v' in dir() and not pd.isna(_lth_sopr_v)
+                         else None),
+            'М-01-Т'  : (str(_m01t_turning)
+                         if '_m01t_turning' in dir()
+                         else None),
+            'М-02-Т'  : (_m02t_vector
+                         if '_m02t_vector' in dir() and _m02t_vector is not None
                          else None),
             'М-02'    : (_cls_m02(_sth_sopr_v)
                          if '_sth_sopr_v' in dir() and not pd.isna(_sth_sopr_v)
